@@ -15,6 +15,7 @@ import (
 // NativeMemory is a memory muninn owns (created with `muninn remember`).
 type NativeMemory struct {
 	ID       string    `json:"id"`
+	Title    string    `json:"title,omitempty"`
 	Content  string    `json:"content"`
 	Category string    `json:"category,omitempty"`
 	Tags     []string  `json:"tags,omitempty"`
@@ -23,6 +24,11 @@ type NativeMemory struct {
 	Strength int       `json:"strength"`
 	Created  time.Time `json:"created"`
 	Updated  time.Time `json:"updated"`
+	// Origin identifies an imported memory ("engram:<sync_id>",
+	// "jcode@<instance>:<project>/<id>"); OriginHash is the hash of the
+	// upstream text at the last import. Both are empty for native memories.
+	Origin     string `json:"origin,omitempty"`
+	OriginHash string `json:"origin_hash,omitempty"`
 }
 
 type nativeFile struct {

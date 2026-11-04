@@ -33,7 +33,7 @@ func main() {
 	}
 	root.AddCommand(versionCmd(), indexCmd(), searchCmd(), recallCmd(), rememberCmd(), forgetCmd(),
 		listCmd(), relatedCmd(), statsCmd(), gcCmd(), hookCmd(), serveCmd(), mcpCmd(), tuiCmd(),
-		installCmd(), uninstallCmd(), configCmd(), jcodeCmd())
+		installCmd(), uninstallCmd(), configCmd(), jcodeCmd(), importCmd())
 	if p := os.Getenv("MUNINN_CPUPROFILE"); p != "" {
 		if f, err := os.Create(p); err == nil {
 			pprof.StartCPUProfile(f)

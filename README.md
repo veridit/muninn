@@ -155,6 +155,26 @@ muninn search --scope 'jcode@client*' "deploy"
 - **muninn memories**: created with `muninn remember`, the web UI or MCP.
 - **Markdown notes**: set `notes_roots` in the config. Files are split at headings.
 
+### Importing
+
+Imports copy memories into muninn's own store, so they stay when the other
+tool goes away and can be corrected in muninn. Every import is idempotent:
+memories are keyed by their upstream id, so running it again changes
+nothing. Changed upstream text updates the copy, unless you edited the copy
+in muninn, in which case your edit wins. Upstream deletions are not
+propagated.
+
+```sh
+muninn import engram --dry-run                       # ~/.engram/engram.db, read-only
+muninn import engram --file engram-export.json       # or an `engram export` file
+muninn import engram --map statbus=jcode@statbus     # put a project into an instance's scope
+muninn import jcode --all-instances                  # keeps each instance's scope
+```
+
+engram `personal` observations become `global`; project observations become
+`engram:<project>` unless mapped. Identical text indexed from two places
+(a live jcode memory and its imported copy) is shown once.
+
 ```sh
 muninn config        # shows paths and effective settings
 muninn config init   # writes config.json with the defaults

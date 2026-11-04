@@ -7,9 +7,12 @@ import (
 	"encoding/gob"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/veridit/muninn/internal/embed"
@@ -192,6 +195,12 @@ func (ix *Indexer) run(ctx context.Context, o Options) (Stats, error) {
 	}
 	t0 := time.Now()
 	var st Stats
+	lap := t0
+	phase := func(name string) {
+		now := time.Now()
+		st.Phases = append(st.Phases, Phase{name, now.Sub(lap)})
+		lap = now
+	}
 	ix.deltas = nil
 	var dirty, removed []int64
 	collect := func(d, r []int64, err error) error {
@@ -220,6 +229,7 @@ func (ix *Indexer) run(ctx context.Context, o Options) (Stats, error) {
 	if err := ix.prunedSources(&st, o); err != nil {
 		return st, err
 	}
+	phase("sources")
 	// Communities: DF-Louvain on the frontier of what changed.
 	if len(ix.deltas) > 0 {
 		g, err := ix.loadGraph()
@@ -244,13 +254,16 @@ func (ix *Indexer) run(ctx context.Context, o Options) (Stats, error) {
 		if err := ix.saveGraph(g, touched, dirtyUnits(dirty)); err != nil {
 			return st, err
 		}
+		phase("communities")
 	}
 	if err := ix.EmbedDirty(ctx, &st); err != nil {
 		return st, err
 	}
+	phase("embed")
 	if err := ix.UpdateNeighbors(dirty, removed); err != nil {
 		return st, err
 	}
+	phase("neighbors")
 	st.Elapsed = time.Since(t0)
 	return st, nil
 }
@@ -395,73 +408,176 @@ func (ix *Indexer) UpdateNeighbors(dirty, removed []int64) error {
 			_, err := ix.DB.Exec(`DELETE FROM neighbors WHERE unit_id=?`, id)
 			return err
 		}
-		best := make([]nbr, 0, len(vecs))
-		for _, v := range vecs {
-			if v.id != id {
-				best = append(best, nbr{v.id, embed.DotQ(q, v.q)})
-			}
-		}
-		sort.Slice(best, func(i, j int) bool { return best[i].sim > best[j].sim })
-		if len(best) > NeighborK {
-			best = best[:NeighborK]
-		}
-		if _, err := ix.DB.Exec(`DELETE FROM neighbors WHERE unit_id=?`, id); err != nil {
-			return err
-		}
-		if len(best) == 0 {
-			return nil
-		}
-		var sb strings.Builder
-		args := make([]any, 0, 3*len(best))
-		sb.WriteString(`INSERT INTO neighbors(unit_id, nbr_id, sim) VALUES `)
-		for i, b := range best {
-			if i > 0 {
-				sb.WriteByte(',')
-			}
-			sb.WriteString("(?,?,?)")
-			args = append(args, id, b.id, b.sim)
-		}
-		_, err := ix.DB.Exec(sb.String(), args...)
-		return err
+		return ix.writeList(id, topK(q, id, vecs))
 	}
 	dirtySet := map[int64]bool{}
 	for _, d := range dirty {
 		dirtySet[d] = true
-		if err := recompute(d); err != nil {
-			return err
-		}
+	}
+	// Fresh lists for dirty and refill units, computed in parallel (pure CPU:
+	// one int8 dot product per vector).
+	var need []int64
+	for _, d := range dirty {
+		need = append(need, d)
 	}
 	for u := range refill {
 		if !dirtySet[u] {
-			if err := recompute(u); err != nil {
+			need = append(need, u)
+		}
+	}
+	fresh := make([][]nbr, len(need))
+	parallel(len(need), func(i int) {
+		if q, ok := byID[need[i]]; ok {
+			fresh[i] = topK(q, need[i], vecs)
+		}
+	})
+	for i, id := range need {
+		if _, ok := byID[id]; !ok {
+			if err := recompute(id); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := ix.writeList(id, fresh[i]); err != nil {
+			return err
+		}
+	}
+	// Offer each active dirty unit to every other list. Lists recomputed above
+	// already considered every vector. The lists live in memory for the pass:
+	// one SQL lookup per (dirty unit x list) made a 3,691-unit import run
+	// ~74M queries (42 min); now each touched list is read once and written
+	// once, and the dot products are split across cores by target list (each
+	// worker owns a disjoint set of lists, so no locking).
+	type list struct {
+		nb      []nbr
+		changed bool
+	}
+	lists := make(map[int64]*list, len(vecs))
+	for _, v := range vecs {
+		lists[v.id] = &list{}
+	}
+	if len(dirty) > 0 {
+		rows, err := ix.DB.Query(`SELECT unit_id, nbr_id, sim FROM neighbors`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var u int64
+			var n nbr
+			if err := rows.Scan(&u, &n.id, &n.sim); err != nil {
+				rows.Close()
+				return err
+			}
+			if l := lists[u]; l != nil {
+				l.nb = append(l.nb, n)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	var offers []vecRow
+	for _, d := range dirty {
+		if q, ok := byID[d]; ok {
+			offers = append(offers, vecRow{d, q})
+		}
+	}
+	parallel(len(vecs), func(i int) {
+		v := vecs[i]
+		if dirtySet[v.id] || refill[v.id] {
+			return
+		}
+		l := lists[v.id]
+		for _, d := range offers {
+			sim := embed.DotQ(d.q, v.q)
+			if len(l.nb) >= NeighborK {
+				worst := 0
+				for j := range l.nb {
+					if l.nb[j].sim < l.nb[worst].sim {
+						worst = j
+					}
+				}
+				if sim <= l.nb[worst].sim {
+					continue
+				}
+				l.nb[worst] = nbr{d.id, sim}
+			} else {
+				l.nb = append(l.nb, nbr{d.id, sim})
+			}
+			l.changed = true
+		}
+	})
+	for id, l := range lists {
+		if l.changed {
+			if err := ix.writeList(id, l.nb); err != nil {
 				return err
 			}
 		}
 	}
-	// Offer each active dirty unit to every other list (cheap: compare with
-	// the k-th). Lists recomputed above already considered every vector.
-	for _, d := range dirty {
-		q, ok := byID[d]
-		if !ok {
-			continue
-		}
-		for _, v := range vecs {
-			if v.id == d || dirtySet[v.id] || refill[v.id] {
-				continue
-			}
-			sim := embed.DotQ(q, v.q)
-			var cnt int
-			var kth float32 = -2
-			ix.DB.QueryRow(`SELECT COUNT(*), COALESCE(MIN(sim), -2) FROM neighbors WHERE unit_id=?`, v.id).Scan(&cnt, &kth)
-			if cnt < NeighborK || sim > kth {
-				if _, err := ix.DB.Exec(`INSERT OR REPLACE INTO neighbors(unit_id, nbr_id, sim) VALUES(?,?,?)`, v.id, d, sim); err != nil {
-					return err
-				}
-				if cnt >= NeighborK {
-					ix.DB.Exec(`DELETE FROM neighbors WHERE unit_id=? AND nbr_id=(SELECT nbr_id FROM neighbors WHERE unit_id=? ORDER BY sim ASC LIMIT 1)`, v.id, v.id)
-				}
-			}
+	return nil
+}
+
+// topK returns id's NeighborK most similar vectors.
+func topK(q []byte, id int64, vecs []vecRow) []nbr {
+	best := make([]nbr, 0, len(vecs))
+	for _, v := range vecs {
+		if v.id != id {
+			best = append(best, nbr{v.id, embed.DotQ(q, v.q)})
 		}
 	}
-	return nil
+	sort.Slice(best, func(i, j int) bool { return best[i].sim > best[j].sim })
+	if len(best) > NeighborK {
+		best = best[:NeighborK]
+	}
+	return best
+}
+
+// writeList replaces one unit's stored neighbour list.
+func (ix *Indexer) writeList(id int64, nb []nbr) error {
+	if _, err := ix.DB.Exec(`DELETE FROM neighbors WHERE unit_id=?`, id); err != nil {
+		return err
+	}
+	if len(nb) == 0 {
+		return nil
+	}
+	var sb strings.Builder
+	args := make([]any, 0, 3*len(nb))
+	sb.WriteString(`INSERT INTO neighbors(unit_id, nbr_id, sim) VALUES `)
+	for i, b := range nb {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString("(?,?,?)")
+		args = append(args, id, b.id, b.sim)
+	}
+	_, err := ix.DB.Exec(sb.String(), args...)
+	return err
+}
+
+// parallel runs f(0..n-1) on all cores.
+func parallel(n int, f func(i int)) {
+	workers := min(runtime.GOMAXPROCS(0), n)
+	if workers <= 1 {
+		for i := 0; i < n; i++ {
+			f(i)
+		}
+		return
+	}
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1) - 1)
+				if i >= n {
+					return
+				}
+				f(i)
+			}
+		}()
+	}
+	wg.Wait()
 }

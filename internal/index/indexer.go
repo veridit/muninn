@@ -19,12 +19,25 @@ type Stats struct {
 	Added, Changed, Removed, Unchanged int
 	Embedded, EmbedReused              int
 	Elapsed                            time.Duration
+	Phases                             []Phase
 	EmbedErr                           error
 }
 
+// Phase is one timed step of an indexing pass.
+type Phase struct {
+	Name string
+	Dur  time.Duration
+}
+
 func (s Stats) String() string {
-	return fmt.Sprintf("sources scanned=%d skipped=%d | units added=%d changed=%d removed=%d unchanged=%d | embedded=%d reused=%d | %s",
+	out := fmt.Sprintf("sources scanned=%d skipped=%d | units added=%d changed=%d removed=%d unchanged=%d | embedded=%d reused=%d | %s",
 		s.SourcesScanned, s.SourcesSkipped, s.Added, s.Changed, s.Removed, s.Unchanged, s.Embedded, s.EmbedReused, s.Elapsed.Round(time.Millisecond))
+	if s.Elapsed > time.Second {
+		for _, p := range s.Phases {
+			out += fmt.Sprintf(" %s=%s", p.Name, p.Dur.Round(time.Millisecond))
+		}
+	}
+	return out
 }
 
 // Indexer applies sources to the store incrementally.
@@ -158,7 +171,7 @@ func (ix *Indexer) IndexNative(ctx context.Context, path string, st *Stats) ([]i
 		}
 		out := make([]Candidate, 0, len(mems))
 		for _, m := range mems {
-			out = append(out, Candidate{Key: m.ID, Kind: "memory", Body: m.Content, Category: m.Category,
+			out = append(out, Candidate{Key: m.ID, Kind: "memory", Title: m.Title, Body: m.Content, Category: m.Category,
 				Tags: m.Tags, Scope: m.Scope, Active: m.Active, Updated: m.Updated})
 		}
 		return out, nil
