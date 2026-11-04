@@ -30,7 +30,10 @@ type Unit struct {
 }
 
 // DB wraps the database handle.
-type DB struct{ *sql.DB }
+type DB struct {
+	*sql.DB
+	Path string
+}
 
 const schema = `
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -122,7 +125,7 @@ func Open(path string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
 	}
-	return &DB{db}, nil
+	return &DB{DB: db, Path: path}, nil
 }
 
 // Source looks up or creates a source row and returns its id and stat.

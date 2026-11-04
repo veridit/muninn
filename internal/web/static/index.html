@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>muninn</title>
+<style>
+  :root { color-scheme: light dark; --fg:#1d1d1f; --muted:#6e6e73; --bg:#fbfbfd; --card:#fff; --line:#e3e3e8; --accent:#3b5bdb; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#ececf1; --muted:#9a9aa3; --bg:#111114; --card:#1a1a1f; --line:#2b2b33; --accent:#8da2ff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 -apple-system, system-ui, Segoe UI, sans-serif; color:var(--fg); background:var(--bg); }
+  header { padding:20px 24px 8px; display:flex; align-items:baseline; gap:12px; }
+  header h1 { margin:0; font-size:20px; }
+  header .sub { color:var(--muted); font-size:13px; }
+  main { max-width:960px; margin:0 auto; padding:0 24px 48px; }
+  .row { display:flex; gap:8px; margin:12px 0; }
+  input, textarea, select, button { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  input[type=search] { flex:1; }
+  button { cursor:pointer; } button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-top:8px; }
+  .tabs button { border:none; border-bottom:2px solid transparent; border-radius:0; background:none; padding:8px 12px; color:var(--muted); }
+  .tabs button.on { color:var(--fg); border-bottom-color:var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin:8px 0; }
+  .meta { color:var(--muted); font-size:12px; margin-top:4px; display:flex; gap:10px; flex-wrap:wrap; }
+  .why { font-family:ui-monospace, Menlo, monospace; font-size:12px; color:var(--muted); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:8px; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .stat b { display:block; font-size:22px; }
+  pre { white-space:pre-wrap; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .hidden { display:none; }
+  a.link { color:var(--accent); cursor:pointer; font-size:12px; }
+</style>
+</head>
+<body>
+<header><h1>muninn</h1><span class="sub" id="status">local memory recall</span></header>
+<main>
+  <div class="tabs">
+    <button class="on" data-tab="search">Search</button>
+    <button data-tab="recall">Recall preview</button>
+    <button data-tab="remember">Remember</button>
+    <button data-tab="log">Injections</button>
+    <button data-tab="stats">Stats</button>
+  </div>
+
+  <section id="search">
+    <div class="row">
+      <input type="search" id="q" placeholder="Search memories (keyword + community + semantic)…" autofocus>
+      <label style="display:flex;align-items:center;gap:6px;color:var(--muted)"><input type="checkbox" id="explain"> explain</label>
+    </div>
+    <div id="results"></div>
+  </section>
+
+  <section id="recall" class="hidden">
+    <div class="row"><input type="search" id="rq" placeholder="Type a message as if to an agent…"><button class="primary" id="rgo">Preview</button></div>
+    <pre id="rout">The block muninn would inject appears here (empty when nothing passes the threshold).</pre>
+  </section>
+
+  <section id="remember" class="hidden">
+    <textarea id="mtext" rows="3" style="width:100%" placeholder="A durable fact, preference or correction. Never secrets."></textarea>
+    <div class="row">
+      <select id="mcat"><option>fact</option><option>preference</option><option>correction</option><option>entity</option></select>
+      <input id="mscope" placeholder="scope (global)">
+      <input id="mtags" placeholder="tags, comma separated" style="flex:1">
+      <button class="primary" id="mgo">Remember</button>
+    </div>
+    <div id="mout" class="meta"></div>
+  </section>
+
+  <section id="log" class="hidden"><div id="logrows"></div></section>
+  <section id="stats" class="hidden"><div class="grid" id="statgrid"></div><pre id="statjson"></pre></section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function api(path, opts) { const r = await fetch(path, opts); if (!r.ok) throw new Error(await r.text()); return r.json(); }
+
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('main > section').forEach(s => s.classList.toggle('hidden', s.id !== b.dataset.tab));
+  if (b.dataset.tab === 'log') loadLog();
+  if (b.dataset.tab === 'stats') loadStats();
+});
+
+function card(r) {
+  return `<div class="card"><div>${esc(r.text)}</div>
+    <div class="meta"><span>#${r.id}</span><span>${esc(r.kind)}</span><span>${esc(r.scope)}</span><span>score ${r.score.toFixed(2)}</span>
+    <a class="link" onclick="related(${r.id})">related</a>${r.forgettable ? ` <a class="link" onclick="forget('${esc(r.key)}')">forget</a>` : ''}</div>
+    ${r.why ? `<div class="why">${esc(r.why)}</div>` : ''}</div>`;
+}
+let timer;
+async function search() {
+  const q = $('#q').value.trim();
+  if (!q) { $('#results').innerHTML = ''; return; }
+  const d = await api(`/api/search?q=${encodeURIComponent(q)}&explain=${$('#explain').checked ? 1 : 0}`);
+  $('#results').innerHTML = d.results.length ? d.results.map(card).join('') : '<div class="meta">no results</div>';
+}
+$('#q').oninput = () => { clearTimeout(timer); timer = setTimeout(search, 150); };
+$('#explain').onchange = search;
+async function related(id) {
+  const d = await api(`/api/related?id=${id}`);
+  $('#results').innerHTML = `<div class="meta">neighbours of #${id}</div>` + (d.results.map(card).join('') || '<div class="meta">none</div>');
+}
+async function forget(key) {
+  if (!confirm('Forget this memory?')) return;
+  await api('/api/forget', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:key})});
+  search();
+}
+$('#rgo').onclick = async () => {
+  const d = await api('/api/recall', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({message: $('#rq').value})});
+  $('#rout').textContent = d.block || `(nothing passed the threshold, ${d.elapsed})`;
+};
+$('#rq').onkeydown = e => { if (e.key === 'Enter') $('#rgo').click(); };
+$('#mgo').onclick = async () => {
+  const body = {content: $('#mtext').value, category: $('#mcat').value, scope: $('#mscope').value,
+    tags: $('#mtags').value.split(',').map(s => s.trim()).filter(Boolean)};
+  const d = await api('/api/remember', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  $('#mout').textContent = d.reinforced ? `reinforced ${d.id}` : `remembered ${d.id}`;
+  $('#mtext').value = '';
+};
+async function loadLog() {
+  const d = await api('/api/injections');
+  $('#logrows').innerHTML = d.rows.map(r => `<div class="card"><div>${esc(r.text)}</div>
+    <div class="meta"><span>${esc(r.at)}</span><span>${esc(r.harness)}</span><span>${esc(r.session)}</span></div></div>`).join('') || '<div class="meta">no injections yet</div>';
+}
+async function loadStats() {
+  const s = await api('/api/stats');
+  const cells = [['active memories', s.active], ['vectors', s.vectors], ['concepts', s.concepts], ['communities', s.communities], ['neighbour edges', s.neighbor_edges], ['injections', s.injections]];
+  $('#statgrid').innerHTML = cells.map(([k, v]) => `<div class="stat"><b>${v}</b>${k}</div>`).join('');
+  $('#statjson').textContent = JSON.stringify(s, null, 2);
+}
+api('/api/stats').then(s => $('#status').textContent = `${s.active} memories · ${s.embedder}`).catch(() => {});
+</script>
+</body>
+</html>
