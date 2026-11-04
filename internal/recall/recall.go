@@ -56,6 +56,9 @@ type Engine struct {
 	// MinSemantic is the cosine a hit needs for automatic injection when an
 	// embedder is available (0 = off).
 	MinSemantic float64
+	// MinSemanticFull is the lower cosine accepted when every query word is
+	// present in the memory (short exact queries embed less precisely).
+	MinSemanticFull float64
 }
 
 // IsOwnOutput reports whether text is (or quotes) a muninn injection.
@@ -98,7 +101,7 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 	if e.MinSemantic > 0 && e.Searcher.Embedder != nil {
 		kept := results[:0]
 		for _, r := range results {
-			if r.Semantic >= e.MinSemantic {
+			if r.Semantic >= e.MinSemantic || (e.MinSemanticFull > 0 && r.Coverage >= 1 && r.Semantic >= e.MinSemanticFull) {
 				kept = append(kept, r)
 			}
 		}

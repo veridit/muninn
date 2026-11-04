@@ -46,9 +46,13 @@ Ranking fuses three signals (from seid search):
 | Semantic | cosine similarity × 10 (local Ollama embeddings) |
 
 The strongest semantic matches get reserved slots, so a memory phrased
-differently from your message still surfaces. Automatic recall then applies an
-absolute floor, a relative floor (drop hits under 62% of the best), at most 5
-memories, never pads, and never injects the same memory twice in one session.
+differently from your message still surfaces. Automatic recall is stricter
+than search: a hit needs cosine >= 0.64 (or >= 0.58 when every query word
+occurs in it), at least 62% of the best hit's score, at most 5 memories, no
+padding, and never the same memory twice in one session. The cosine gate was
+tuned on a real store of 960 memories with `nomic-embed-text`: unrelated
+prompts ("thanks", "write a python hello world") reached 0.52-0.62, true
+matches 0.66-0.77.
 
 Vectors are stored three ways: float32 for exact scoring, int8 (4× smaller,
 max cosine error 0.0014 measured) for the neighbour graph, and a 1-bit sign
@@ -65,7 +69,12 @@ On an Apple M1 Max, synthetic data (`go test ./internal/index -run Scale -v`):
 | Change 1 of 2000 memories | 69 ms, exactly 1 embedding |
 | No-op pass | 2.3 ms |
 | Search over 2000 memories | 31 ms |
-| One full `muninn recall` process, real Ollama `nomic-embed-text` | 63 ms |
+| One `muninn recall` process, 5 synthetic memories, real Ollama | 60-90 ms |
+| One hook call, 960 real memories, real Ollama (model warm) | 110-180 ms |
+
+The first hook call after Ollama has unloaded the embedding model pays a
+model load (measured 420-650 ms). muninn asks Ollama to keep the ~300 MB
+`nomic-embed-text` resident for 30 minutes.
 
 ## Install
 
@@ -108,9 +117,9 @@ Installers are idempotent, keep a timestamped backup, and leave your other hooks
 
 | Harness | Mechanism | When the memory arrives |
 |---|---|---|
-| Claude Code | `UserPromptSubmit` hook, `additionalContext` | before the model answers |
-| Codex | `UserPromptSubmit` hook, `additionalContext` | before the model answers |
-| jcode | `turn_start` hook + `jcode transcript` | at the next safe point of the running turn (jcode has no synchronous context hook yet; see [jcode#2069](https://github.com/1jehuang/jcode/issues/2069)) |
+| Claude Code | `UserPromptSubmit` hook, `additionalContext` | before the model answers (output format verified against the docs; not yet run in a live session) |
+| Codex | `UserPromptSubmit` hook, `additionalContext` | before the model answers (output format verified against codex-rs; not yet run in a live session) |
+| jcode | `turn_start` hook + `jcode transcript` | at the next safe point of the running turn (jcode has no synchronous context hook yet; see [jcode#2069](https://github.com/1jehuang/jcode/issues/2069)). Verified live. |
 | any MCP client | `muninn mcp` (stdio) | when the agent calls `memory_search` / `memory_recall` |
 
 MCP tools: `memory_search`, `memory_recall`, `memory_remember`, `memory_forget`,
@@ -130,7 +139,8 @@ muninn config init   # writes config.json with the defaults
 ## Privacy and security
 
 Everything stays on your machine. The only network call goes to the embedding
-server you configure (default `http://127.0.0.1:11434`). The web UI binds to
+server you configure (default `http://127.0.0.1:11434`). The database is
+created owner-only (0600). The web UI binds to
 loopback only and rejects foreign `Host` and cross-origin writes. muninn never
 reads harness credential files. See [SECURITY.md](SECURITY.md).
 

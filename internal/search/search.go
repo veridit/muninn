@@ -50,12 +50,15 @@ type Result struct {
 	Community int
 	Semantic  float64 // raw cosine
 	Total     float64
+	// Coverage is the fraction of (non-stopword) query words found in the unit
+	// by full-text search, 0..1.
+	Coverage float64
 }
 
 // Explain renders the score breakdown.
 func (r Result) Explain() string {
-	return fmt.Sprintf("total=%.2f keyword=%d community=%d(+%.2f) semantic=%.3f", r.Total, r.Keyword,
-		r.Community, math.Log(1+float64(r.Community)), r.Semantic)
+	return fmt.Sprintf("total=%.2f keyword=%d community=%d(+%.2f) semantic=%.3f coverage=%.2f", r.Total, r.Keyword,
+		r.Community, math.Log(1+float64(r.Community)), r.Semantic, r.Coverage)
 }
 
 // Searcher runs queries against the store.
@@ -276,7 +279,11 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 		if !u.Active || !allowed(u.Scope, o.Scopes) || !allowed(u.Kind, o.Kinds) {
 			continue
 		}
-		results = append(results, Result{Unit: u, Keyword: a.kw, Community: a.comm, Semantic: sem[id], Total: c.total})
+		r := Result{Unit: u, Keyword: a.kw, Community: a.comm, Semantic: sem[id], Total: c.total}
+		if len(words) > 0 {
+			r.Coverage = math.Min(1, float64(a.words)/float64(len(words)))
+		}
+		results = append(results, r)
 	}
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Total != results[j].Total {
