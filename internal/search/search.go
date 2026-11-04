@@ -228,7 +228,13 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 	sem := map[int64]float64{}
 	semOn := false
 	if s.Embedder != nil && strings.TrimSpace(query) != "" {
-		vecs, err := s.Embedder.Embed(ctx, []string{query})
+		// Embed the query the way the active pipeline's documents were
+		// embedded (mid-migration that may be the previous prompt recipe).
+		qtext := embed.Query(s.Embedder, query)
+		if s.DB.GetMeta("pipeline_hash") != index.PipelineHash(s.Embedder.Model()) {
+			qtext = s.DB.GetMeta("pipeline_query_prefix") + query
+		}
+		vecs, err := s.Embedder.Embed(ctx, []string{qtext})
 		if err == nil && len(vecs) == 1 {
 			semOn = true
 			if err := s.semantic(ctx, vecs[0], o, sem); err != nil {

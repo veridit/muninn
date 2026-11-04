@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -164,7 +165,19 @@ func recallCmd() *cobra.Command {
 
 // ensureFresh runs a cheap incremental pass (stat-only when nothing changed).
 func ensureFresh(ctx context.Context, a *app.App) (index.Stats, error) {
-	return a.Reindex(ctx)
+	// Recall paths must stay fast: never embed inline beyond a handful of
+	// brand-new memories (one Ollama batch is ~0.2-2 s). Larger backlogs,
+	// including a model or prompt change, are left to `muninn index`/`serve`.
+	a.Indexer.MaxEmbed = 8
+	// If another process is indexing, do not queue behind it: WAL still lets
+	// this process read a consistent snapshot, so recall just runs on that.
+	a.Indexer.NoWait = true
+	defer func() { a.Indexer.MaxEmbed, a.Indexer.NoWait = 0, false }()
+	st, err := a.Reindex(ctx)
+	if errors.Is(err, index.ErrBusy) {
+		return st, nil
+	}
+	return st, err
 }
 
 func rememberCmd() *cobra.Command {

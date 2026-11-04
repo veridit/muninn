@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"encoding/gob"
 	"os"
 	"path/filepath"
@@ -161,8 +162,22 @@ type Options struct {
 // (profiled at 92% in syscalls), and a pass is all-or-nothing anyway.
 // store.Open caps the pool at one connection, so BEGIN/COMMIT on the pool
 // bracket every statement of the pass.
+// ErrBusy is returned with NoWait when another process holds the write lock.
+var ErrBusy = errors.New("index busy: another muninn process is writing")
+
 func (ix *Indexer) Run(ctx context.Context, o Options) (Stats, error) {
-	if _, err := ix.DB.Exec(`BEGIN IMMEDIATE`); err != nil {
+	if ix.NoWait {
+		// busy_timeout applies per statement; drop it for the lock attempt.
+		ix.DB.Exec(`PRAGMA busy_timeout=0`)
+		_, err := ix.DB.Exec(`BEGIN IMMEDIATE`)
+		ix.DB.Exec(`PRAGMA busy_timeout=5000`)
+		if err != nil {
+			if strings.Contains(err.Error(), "SQLITE_BUSY") || strings.Contains(err.Error(), "locked") {
+				return Stats{}, ErrBusy
+			}
+			return Stats{}, err
+		}
+	} else if _, err := ix.DB.Exec(`BEGIN IMMEDIATE`); err != nil {
 		return Stats{}, err
 	}
 	st, err := ix.run(ctx, o)
@@ -256,10 +271,29 @@ func (ix *Indexer) run(ctx context.Context, o Options) (Stats, error) {
 		}
 		phase("communities")
 	}
+	ix.pipelineSwitched = false
 	if err := ix.EmbedDirty(ctx, &st); err != nil {
 		return st, err
 	}
 	phase("embed")
+	if ix.pipelineSwitched {
+		// New model or prompt recipe: rebuild every neighbour list once.
+		if _, err := ix.DB.Exec(`DELETE FROM neighbors`); err != nil {
+			return st, err
+		}
+		rows, err := ix.DB.Query(`SELECT id FROM units WHERE active=1`)
+		if err != nil {
+			return st, err
+		}
+		dirty = dirty[:0]
+		for rows.Next() {
+			var id int64
+			rows.Scan(&id)
+			dirty = append(dirty, id)
+		}
+		rows.Close()
+		removed = nil
+	}
 	if err := ix.UpdateNeighbors(dirty, removed); err != nil {
 		return st, err
 	}

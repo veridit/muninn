@@ -11,6 +11,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
+
+	"github.com/veridit/muninn/internal/embed"
 )
 
 // SchemaVersion bumps when the representation of persisted vectors changes
@@ -48,9 +50,11 @@ func ContentHash(embeddingText string) string {
 
 // PipelineHash identifies the embedding recipe for a model.
 func PipelineHash(model string) string {
+	p := embed.PromptsFor(model)
 	h := sha256.New()
 	h.Write([]byte("muninn-embed\x00schema=" + strconv.Itoa(SchemaVersion) +
 		"\x00recipe=" + strconv.Itoa(RecipeVersion) +
-		"\x00max=" + strconv.Itoa(MaxEmbedBytes) + "\x00model=" + model))
+		"\x00max=" + strconv.Itoa(MaxEmbedBytes) + "\x00model=" + model +
+		"\x00docprefix=" + p.Document))
 	return hex.EncodeToString(h.Sum(nil))
 }

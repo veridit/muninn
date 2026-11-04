@@ -18,6 +18,7 @@ type Stats struct {
 	SourcesScanned, SourcesSkipped     int
 	Added, Changed, Removed, Unchanged int
 	Embedded, EmbedReused              int
+	EmbedPending                       int // left for a later pass (MaxEmbed)
 	Elapsed                            time.Duration
 	Phases                             []Phase
 	EmbedErr                           error
@@ -32,6 +33,9 @@ type Phase struct {
 func (s Stats) String() string {
 	out := fmt.Sprintf("sources scanned=%d skipped=%d | units added=%d changed=%d removed=%d unchanged=%d | embedded=%d reused=%d | %s",
 		s.SourcesScanned, s.SourcesSkipped, s.Added, s.Changed, s.Removed, s.Unchanged, s.Embedded, s.EmbedReused, s.Elapsed.Round(time.Millisecond))
+	if s.EmbedPending > 0 {
+		out += fmt.Sprintf(" | %d still to embed (run `muninn index`)", s.EmbedPending)
+	}
 	if s.Elapsed > time.Second {
 		for _, p := range s.Phases {
 			out += fmt.Sprintf(" %s=%s", p.Name, p.Dur.Round(time.Millisecond))
@@ -44,8 +48,14 @@ func (s Stats) String() string {
 type Indexer struct {
 	DB       *store.DB
 	Embedder embed.Embedder // nil = keyword-only
+	// MaxEmbed caps embeddings per pass (0 = no cap); hooks set it.
+	MaxEmbed int
+	// NoWait makes Run return ErrBusy instead of waiting for another
+	// process's write transaction (hooks).
+	NoWait bool
 
-	deltas []UnitDelta // concept-set changes collected during a pass
+	deltas           []UnitDelta // concept-set changes collected during a pass
+	pipelineSwitched bool        // this pass completed a new embedding pipeline
 }
 
 // Candidate is a unit as produced by a source, before storage.
@@ -257,13 +267,21 @@ func (ix *Indexer) EmbedDirty(ctx context.Context, st *Stats) error {
 	var total int
 	ix.DB.QueryRow(`SELECT COUNT(DISTINCT content_hash) FROM units`).Scan(&total)
 	st.EmbedReused = total - len(jobs)
+	// A hook must answer in milliseconds: it embeds at most MaxEmbed texts and
+	// leaves the rest (e.g. a full re-embed after a model change) to
+	// `muninn index` or `muninn serve`. Search keeps using the previous
+	// pipeline until every vector of the new one exists.
+	pending := len(jobs)
+	if ix.MaxEmbed > 0 && len(jobs) > ix.MaxEmbed {
+		jobs = jobs[:ix.MaxEmbed]
+	}
 	for start := 0; start < len(jobs); start += embed.BatchSize {
 		end := min(start+embed.BatchSize, len(jobs))
 		texts := make([]string, 0, end-start)
 		for _, j := range jobs[start:end] {
 			texts = append(texts, j.text)
 		}
-		vecs, err := ix.Embedder.Embed(ctx, texts)
+		vecs, err := ix.Embedder.Embed(ctx, embed.Documents(ix.Embedder, texts))
 		if err != nil {
 			st.EmbedErr = err
 			return nil // degrade to keyword-only; never fail indexing
@@ -275,6 +293,16 @@ func (ix *Indexer) EmbedDirty(ctx context.Context, st *Stats) error {
 			}
 			st.Embedded++
 		}
+	}
+	if st.Embedded < pending {
+		st.EmbedPending = pending - st.Embedded
+		return nil
+	}
+	if ix.DB.GetMeta("pipeline_hash") != pipeline {
+		ix.pipelineSwitched = true // every stored similarity is stale
+	}
+	if err := ix.DB.SetMeta("pipeline_query_prefix", embed.PromptsFor(ix.Embedder.Model()).Query); err != nil {
+		return err
 	}
 	return ix.DB.SetMeta("pipeline_hash", pipeline)
 }

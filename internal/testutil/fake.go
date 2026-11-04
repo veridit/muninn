@@ -15,12 +15,18 @@ import (
 // counts every text it embeds, so tests can prove what was (not) re-embedded.
 type FakeEmbedder struct {
 	Dim   int
+	Name  string       // model name; default "fake-embed"
 	Calls atomic.Int64 // number of texts embedded
 }
 
 var synonyms = map[string]string{"pie": "cake", "pastry": "cake", "dessert": "cake", "bananas": "banana"}
 
-func (f *FakeEmbedder) Model() string { return "fake-embed" }
+func (f *FakeEmbedder) Model() string {
+	if f.Name != "" {
+		return f.Name
+	}
+	return "fake-embed"
+}
 
 func (f *FakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
 	dim := f.Dim
