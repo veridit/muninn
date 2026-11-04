@@ -1,0 +1,110 @@
+// Package config resolves muninn's directories and settings.
+//
+// Data and config live in the OS-standard per-user locations, never in the
+// repository: $XDG_DATA_HOME / ~/Library/Application Support / %AppData%.
+// MUNINN_HOME overrides everything (used by tests).
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+)
+
+// Config is the user-editable settings file (config.json in ConfigDir).
+type Config struct {
+	OllamaURL      string   `json:"ollama_url"`
+	EmbedModel     string   `json:"embed_model"`
+	EmbedDelayMS   int      `json:"embed_delay_ms"`
+	JcodeMemoryDir string   `json:"jcode_memory_dir"`
+	NotesRoots     []string `json:"notes_roots"`
+	// Recall tuning.
+	MinScore       float64 `json:"min_score"`
+	MaxResults     int     `json:"max_results"`
+	SemanticWeight float64 `json:"semantic_weight"`
+	SemanticFloor  float64 `json:"semantic_floor"`
+	SemanticSlots  int     `json:"semantic_slots"`
+	ListenAddr     string  `json:"listen_addr"`
+}
+
+// Defaults returns the built-in configuration.
+func Defaults() Config {
+	home, _ := os.UserHomeDir()
+	return Config{
+		OllamaURL:      "http://127.0.0.1:11434",
+		EmbedModel:     "nomic-embed-text",
+		JcodeMemoryDir: filepath.Join(home, ".jcode", "memory"),
+		MinScore:       6.0,
+		MaxResults:     5,
+		SemanticWeight: 10.0, // seid search: semantic_weight
+		SemanticFloor:  0.5,
+		SemanticSlots:  3, // seid search: reserved semantic slots
+		ListenAddr:     "127.0.0.1:7431",
+	}
+}
+
+// Home returns the MUNINN_HOME override, if set.
+func Home() string { return os.Getenv("MUNINN_HOME") }
+
+// DataDir holds the database.
+func DataDir() string {
+	if h := Home(); h != "" {
+		return filepath.Join(h, "data")
+	}
+	if x := os.Getenv("XDG_DATA_HOME"); x != "" {
+		return filepath.Join(x, "muninn")
+	}
+	home, _ := os.UserHomeDir()
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "muninn")
+	case "windows":
+		if a := os.Getenv("LOCALAPPDATA"); a != "" {
+			return filepath.Join(a, "muninn")
+		}
+	}
+	return filepath.Join(home, ".local", "share", "muninn")
+}
+
+// ConfigDir holds config.json.
+func ConfigDir() string {
+	if h := Home(); h != "" {
+		return filepath.Join(h, "config")
+	}
+	d, err := os.UserConfigDir()
+	if err != nil {
+		home, _ := os.UserHomeDir()
+		d = filepath.Join(home, ".config")
+	}
+	return filepath.Join(d, "muninn")
+}
+
+// DBPath is the SQLite database location.
+func DBPath() string { return filepath.Join(DataDir(), "muninn.db") }
+
+// Load reads config.json over the defaults. A missing file is not an error.
+func Load() (Config, error) {
+	c := Defaults()
+	b, err := os.ReadFile(filepath.Join(ConfigDir(), "config.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return c, nil
+	}
+	if err != nil {
+		return c, err
+	}
+	if err := json.Unmarshal(b, &c); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
+// Save writes config.json.
+func Save(c Config) error {
+	if err := os.MkdirAll(ConfigDir(), 0o700); err != nil {
+		return err
+	}
+	b, _ := json.MarshalIndent(c, "", "  ")
+	return os.WriteFile(filepath.Join(ConfigDir(), "config.json"), append(b, '\n'), 0o600)
+}

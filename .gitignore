@@ -1,0 +1,26 @@
+# Build output
+/bin/
+/dist/
+/muninn
+/muninn.exe
+
+# Local data and anything that could hold real memories or credentials.
+# muninn keeps its data in the OS data dir, never in the repo.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+/data/
+/export/
+*.memories.json
+.env
+.env.*
+*.env
+!testdata/**
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
