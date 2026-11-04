@@ -103,12 +103,43 @@ func MergeImport(path string, items []Imported, dry bool) (ImportStats, error) {
 		}
 		m.Title, m.Content, m.Category, m.Tags, m.Active = it.Title, it.Content, it.Category, it.Tags, it.Active
 		m.Scope, m.OriginHash, m.Updated = it.Scope, h, now
+		if !it.Updated.IsZero() {
+			m.Updated = it.Updated // a copy, not a new edit: keep upstream time
+		}
 		st.Updated++
 	}
 	if dry || st.Added+st.Updated == 0 {
 		return st, nil
 	}
 	return st, SaveNative(path, mems)
+}
+
+// MarkSynced records that every memory in scope now equals its copy in an
+// external file: memories without an origin get origin(id), and every
+// OriginHash is set to the current text. The next merge of that file is then
+// a no-op, and later edits on either side are detected again.
+func MarkSynced(path, scope string, origin func(id string) string) error {
+	mems, err := LoadNative(path)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i := range mems {
+		m := &mems[i]
+		if m.Scope != scope {
+			continue
+		}
+		if m.Origin == "" {
+			m.Origin, changed = origin(m.ID), true
+		}
+		if h := originHash(m.Title, m.Content, m.Scope, m.Active); m.OriginHash != h {
+			m.OriginHash, changed = h, true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return SaveNative(path, mems)
 }
 
 // JcodeImportItems reads every memory of one jcode instance's memory dir.

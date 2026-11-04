@@ -155,6 +155,26 @@ muninn search --scope 'jcode@client*' "deploy"
 - **muninn memories**: created with `muninn remember`, the web UI or MCP.
 - **Markdown notes**: set `notes_roots` in the config. Files are split at headings.
 
+### Sharing project memories with your team
+
+A repository gets a stable identity from its first git commit, so its
+memories follow it through renames, moves and fresh clones (a folder outside
+git gets an id in `.muninn/project` instead).
+
+```sh
+muninn project                         # id, label, scope of the current repo
+muninn remember --project "Releases are cut with make release"
+muninn sync                            # merge .muninn/memories.jsonl, write ours back
+git add .muninn && git commit -m "Share project memories"
+```
+
+`.muninn/memories.jsonl` holds one memory per line, sorted by id, so diffs
+and merges stay readable. `sync` is idempotent in both directions. Only
+memories in the project scope are written: personal, global and client
+memories never leave your machine, and anything that looks like a credential
+is withheld. A teammate pulls and runs `muninn sync`, and the memories are
+recalled in every harness working inside that repository.
+
 ### Importing
 
 Imports copy memories into muninn's own store, so they stay when the other

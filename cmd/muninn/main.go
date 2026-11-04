@@ -19,6 +19,7 @@ import (
 	"github.com/veridit/muninn/internal/harness"
 	"github.com/veridit/muninn/internal/index"
 	"github.com/veridit/muninn/internal/ingest"
+	"github.com/veridit/muninn/internal/project"
 	"github.com/veridit/muninn/internal/recall"
 	"github.com/veridit/muninn/internal/search"
 )
@@ -34,7 +35,7 @@ func main() {
 	}
 	root.AddCommand(versionCmd(), indexCmd(), searchCmd(), recallCmd(), rememberCmd(), forgetCmd(),
 		listCmd(), relatedCmd(), statsCmd(), gcCmd(), hookCmd(), serveCmd(), mcpCmd(), tuiCmd(),
-		installCmd(), uninstallCmd(), configCmd(), jcodeCmd(), importCmd())
+		installCmd(), uninstallCmd(), configCmd(), jcodeCmd(), importCmd(), projectCmd(), syncCmd())
 	if p := os.Getenv("MUNINN_CPUPROFILE"); p != "" {
 		if f, err := os.Create(p); err == nil {
 			pprof.StartCPUProfile(f)
@@ -183,8 +184,16 @@ func ensureFresh(ctx context.Context, a *app.App) (index.Stats, error) {
 func rememberCmd() *cobra.Command {
 	var category, scope string
 	var tags []string
+	var inProject bool
 	c := &cobra.Command{Use: "remember <text>", Short: "Store a memory", Args: cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
+			if inProject {
+				p, err := project.Find(dirOr(""), true)
+				if err != nil {
+					return err
+				}
+				scope = p.Scope()
+			}
 			m, reinforced, err := ingest.Remember(app.NativePath(), strings.Join(args, " "), category, scope, tags)
 			if err != nil {
 				return err
@@ -199,6 +208,7 @@ func rememberCmd() *cobra.Command {
 	c.Flags().StringVar(&category, "category", "fact", "fact | preference | correction | entity")
 	c.Flags().StringVar(&scope, "scope", "global", "global or a project name")
 	c.Flags().StringSliceVar(&tags, "tag", nil, "tag (repeatable)")
+	c.Flags().BoolVar(&inProject, "project", false, "store in this repository's project scope (shareable with `muninn sync`)")
 	return c
 }
 
@@ -308,7 +318,7 @@ func runHook(name string, budget time.Duration) error {
 		if err != nil {
 			return err
 		}
-		resp, err := hookRecall(ctx, name, in.SessionID, in.Prompt)
+		resp, err := hookRecall(ctx, name, in.SessionID, in.Prompt, in.Cwd)
 		if err != nil {
 			return err
 		}
@@ -336,7 +346,8 @@ func runHook(name string, budget time.Duration) error {
 		}
 		defer a.Close()
 		inst := harness.InstanceForHome(a.JcodeInstances(), jh)
-		resp, err := hookRecallWith(ctx, a, name, sid, msg, jcodeRecallScopes(inst, a.Cfg.JcodeShareGlobal))
+		scopes := withProject(jcodeRecallScopes(inst, a.Cfg.JcodeShareGlobal), os.Getenv("JCODE_HOOK_CWD"))
+		resp, err := hookRecallWith(ctx, a, name, sid, msg, scopes)
 		if err != nil || resp.Block == "" {
 			logHook("jcode[%s] %s: msg=%q hits=0 skipped=%q elapsed=%s", inst.Name, short(sid), recall.Truncate(msg, 60), resp.Skipped, resp.Elapsed)
 			return err
@@ -361,13 +372,28 @@ func runHook(name string, budget time.Duration) error {
 	}
 }
 
-func hookRecall(ctx context.Context, harnessName, session, msg string) (recall.Response, error) {
+func hookRecall(ctx context.Context, harnessName, session, msg, cwd string) (recall.Response, error) {
 	a, err := app.Open(ctx)
 	if err != nil {
 		return recall.Response{}, err
 	}
 	defer a.Close()
-	return hookRecallWith(ctx, a, harnessName, session, msg, nil)
+	// Claude Code / Codex have no instance isolation: recall stays
+	// unrestricted (nil scopes), as before. Project scoping applies where a
+	// scope list exists (jcode instances).
+	return hookRecallWith(ctx, a, harnessName, session, msg, withProject(nil, cwd))
+}
+
+// withProject adds the scope of the project at cwd (if any) to an explicit
+// scope list. A nil list means "no restriction" and stays nil.
+func withProject(scopes []string, cwd string) []string {
+	if cwd == "" || scopes == nil {
+		return scopes
+	}
+	if p, err := project.Find(cwd, false); err == nil {
+		return append(scopes, p.Scope())
+	}
+	return scopes
 }
 
 func hookRecallWith(ctx context.Context, a *app.App, harnessName, session, msg string, scopes []string) (recall.Response, error) {
