@@ -146,9 +146,9 @@ python3 scripts/mcp-e2e.py bin/muninn
 
 ## Credits
 
-The indexing and ranking design comes from **seid search** in
-[seid-lang](https://github.com/veridit/seid-lang) (Veridit). The incremental
-community update follows *DF-Louvain* (Sahu, arXiv:2404.19634).
+The indexing and ranking design comes from **seid search**, the search engine
+of Veridit's Seid language tooling. The incremental community update follows
+*DF-Louvain* (Sahu, arXiv:2404.19634).
 
 ## License
 
