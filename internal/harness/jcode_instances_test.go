@@ -22,10 +22,11 @@ _jcode_run() { echo "(not a registry)"; }
 	if err != nil {
 		t.Fatal(err)
 	}
+	j := filepath.Join
 	want := []JcodeInstance{
-		{"brovs", "/work/Brovs", "/work/Brovs/.jcode"},
-		{"games", home + "/Projects/Games", home + "/Projects/Games/.jcode"},
-		{"seid", home + "/src/seid", home + "/src/seid/.jcode"},
+		{"brovs", j("/work/Brovs"), j("/work/Brovs", ".jcode")},
+		{"games", j(home, "Projects/Games"), j(home, "Projects/Games", ".jcode")},
+		{"seid", j(home, "src/seid"), j(home, "src/seid", ".jcode")},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %+v", got)
@@ -38,7 +39,7 @@ _jcode_run() { echo "(not a registry)"; }
 	// One-line form.
 	os.WriteFile(rc, []byte(`typeset -A JCODE_INSTANCES=( a /x b /y )`+"\n"), 0o600)
 	got, _ = ParseZshInstances(rc, home)
-	if len(got) != 2 || got[1].Home != "/y/.jcode" {
+	if len(got) != 2 || got[1].Home != filepath.Join("/y", ".jcode") {
 		t.Fatalf("one-line: %+v", got)
 	}
 }
