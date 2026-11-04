@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -81,6 +82,10 @@ func (o *Ollama) embedBatch(ctx context.Context, texts []string) ([][]float32, e
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if resp.StatusCode == http.StatusNotFound && !strings.Contains(string(raw), "model") {
+		// Ollama older than /api/embed (< 0.3.4): one text per legacy call.
+		return o.embedLegacy(ctx, texts)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("ollama: HTTP %d: %.200s", resp.StatusCode, raw)
 	}
@@ -97,4 +102,34 @@ func (o *Ollama) embedBatch(ctx context.Context, texts []string) ([][]float32, e
 		Normalize(r.Embeddings[i])
 	}
 	return r.Embeddings, nil
+}
+
+// embedLegacy uses the pre-batch /api/embeddings endpoint (one prompt per call).
+func (o *Ollama) embedLegacy(ctx context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, 0, len(texts))
+	for _, t := range texts {
+		body, _ := json.Marshal(map[string]any{"model": o.Name, "prompt": t, "keep_alive": o.KeepAlive})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.URL+"/api/embeddings", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := o.HTTP.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("ollama: %w", err)
+		}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("ollama legacy: HTTP %d: %.200s", resp.StatusCode, raw)
+		}
+		var r struct {
+			Embedding []float32 `json:"embedding"`
+		}
+		if err := json.Unmarshal(raw, &r); err != nil || len(r.Embedding) == 0 {
+			return nil, fmt.Errorf("ollama legacy: bad response: %.200s", raw)
+		}
+		out = append(out, Normalize(r.Embedding))
+	}
+	return out, nil
 }

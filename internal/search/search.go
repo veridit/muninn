@@ -53,6 +53,9 @@ type Result struct {
 	// Coverage is the fraction of (non-stopword) query words found in the unit
 	// by full-text search, 0..1.
 	Coverage float64
+	// SemanticOn is true when the query embedding succeeded, so Semantic is
+	// meaningful (0 then means "below the floor", not "unknown").
+	SemanticOn bool
 }
 
 // Explain renders the score breakdown.
@@ -223,9 +226,11 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 
 	// 5c. semantic similarity.
 	sem := map[int64]float64{}
+	semOn := false
 	if s.Embedder != nil && strings.TrimSpace(query) != "" {
 		vecs, err := s.Embedder.Embed(ctx, []string{query})
 		if err == nil && len(vecs) == 1 {
+			semOn = true
 			if err := s.semantic(ctx, vecs[0], o, sem); err != nil {
 				return nil, err
 			}
@@ -279,7 +284,7 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 		if !u.Active || !allowed(u.Scope, o.Scopes) || !allowed(u.Kind, o.Kinds) {
 			continue
 		}
-		r := Result{Unit: u, Keyword: a.kw, Community: a.comm, Semantic: sem[id], Total: c.total}
+		r := Result{Unit: u, Keyword: a.kw, Community: a.comm, Semantic: sem[id], Total: c.total, SemanticOn: semOn}
 		if len(words) > 0 {
 			r.Coverage = math.Min(1, float64(a.words)/float64(len(words)))
 		}

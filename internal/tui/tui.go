@@ -41,17 +41,21 @@ type resultsMsg struct {
 	block   string
 	elapsed time.Duration
 	err     error
+	note    string // kept in the status line (e.g. "forgot mem_...")
 }
 
 // Run starts the TUI.
 func Run(a *app.App) error {
+	_, err := tea.NewProgram(newModel(a), tea.WithAltScreen()).Run()
+	return err
+}
+
+func newModel(a *app.App) model {
 	in := textinput.New()
 	in.Placeholder = "search memories…"
 	in.Focus()
 	in.Prompt = "› "
-	m := model{a: a, input: in, status: "tab: search/recall · ctrl+e: explain · ↑↓ move · ctrl+r: related · ctrl+d: forget · esc: quit"}
-	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
-	return err
+	return model{a: a, input: in, status: "tab: search/recall · ctrl+e: explain · ↑↓ move · ctrl+r: related · ctrl+d: forget · esc: quit"}
 }
 
 func (m model) Init() tea.Cmd { return textinput.Blink }
@@ -90,6 +94,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeRecall {
 			m.status = "recall preview in " + msg.elapsed.Round(time.Millisecond).String()
 		}
+		if msg.note != "" {
+			m.status = msg.note + " · " + m.status
+		}
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc", "ctrl+c":
@@ -126,8 +133,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u := m.results[m.cursor].Unit
 				if ok, err := ingest.Forget(app.NativePath(), u.Key); err == nil && ok {
 					m.a.Reindex(context.Background())
-					m.status = "forgot " + u.Key
-					return m, m.run()
+					note := "forgot " + u.Key
+					run := m.run()
+					return m, func() tea.Msg {
+						r := run().(resultsMsg)
+						r.note = note
+						return r
+					}
 				}
 				m.status = "only muninn memories can be forgotten here"
 			}

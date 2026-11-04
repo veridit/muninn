@@ -96,9 +96,10 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 	if err != nil {
 		return Response{}, err
 	}
-	// Semantic gate first (when embeddings exist), then the relative floor
-	// against the best surviving hit.
-	if e.MinSemantic > 0 && e.Searcher.Embedder != nil {
+	// Semantic gate first (only when the query embedding actually succeeded;
+	// if Ollama fails mid-session recall degrades to keyword-only instead of
+	// dropping everything), then the relative floor against the best hit.
+	if e.MinSemantic > 0 && len(results) > 0 && results[0].SemanticOn {
 		kept := results[:0]
 		for _, r := range results {
 			if r.Semantic >= e.MinSemantic || (e.MinSemanticFull > 0 && r.Coverage >= 1 && r.Semantic >= e.MinSemanticFull) {

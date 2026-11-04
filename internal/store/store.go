@@ -198,18 +198,15 @@ func (d *DB) UpsertUnit(u Unit) (int64, error) {
 	return id, err
 }
 
-// DeleteUnit removes a unit and its graph edges.
+// DeleteUnit removes a unit and its concept membership. Neighbour edges are
+// left for Indexer.UpdateNeighbors, which needs them to know which other
+// lists referenced the unit and must be refilled.
 func (d *DB) DeleteUnit(id int64) error {
 	for _, q := range []string{
-		`DELETE FROM neighbors WHERE unit_id=? OR nbr_id=?`,
 		`DELETE FROM unit_concepts WHERE unit_id=?`,
 		`DELETE FROM units WHERE id=?`,
 	} {
-		args := []any{id}
-		if strings.Count(q, "?") == 2 {
-			args = append(args, id)
-		}
-		if _, err := d.Exec(q, args...); err != nil {
+		if _, err := d.Exec(q, id); err != nil {
 			return err
 		}
 	}

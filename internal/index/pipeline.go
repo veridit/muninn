@@ -294,9 +294,14 @@ func (ix *Indexer) UpdateNeighbors(dirty, removed []int64) error {
 	for _, v := range vecs {
 		byID[v.id] = v.q
 	}
-	// Units that referenced a removed neighbour need refilling.
+	// Every dirty unit (changed text, forgotten, revived) and every removed
+	// unit is first detached: units that referenced it lose that edge and are
+	// refilled from scratch, because the old similarity is stale or the target
+	// is no longer active. Dirty units that are still active are then offered
+	// back to every other list below.
 	refill := map[int64]bool{}
-	for _, r := range removed {
+	detach := append(append([]int64(nil), removed...), dirty...)
+	for _, r := range detach {
 		rows, err := ix.DB.Query(`SELECT unit_id FROM neighbors WHERE nbr_id=?`, r)
 		if err != nil {
 			return err
@@ -360,14 +365,15 @@ func (ix *Indexer) UpdateNeighbors(dirty, removed []int64) error {
 			}
 		}
 	}
-	// Offer each dirty unit to every other unit's list (cheap: compare with k-th).
+	// Offer each active dirty unit to every other list (cheap: compare with
+	// the k-th). Lists recomputed above already considered every vector.
 	for _, d := range dirty {
 		q, ok := byID[d]
 		if !ok {
 			continue
 		}
 		for _, v := range vecs {
-			if v.id == d || dirtySet[v.id] {
+			if v.id == d || dirtySet[v.id] || refill[v.id] {
 				continue
 			}
 			sim := embed.DotQ(q, v.q)
