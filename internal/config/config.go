@@ -29,7 +29,7 @@ type Config struct {
 	// RelativeFloor drops recall hits scoring below this fraction of the top
 	// hit, so one strong match does not drag weak neighbours along.
 	RelativeFloor float64 `json:"relative_floor"`
-	ListenAddr     string  `json:"listen_addr"`
+	ListenAddr    string  `json:"listen_addr"`
 }
 
 // Defaults returns the built-in configuration.
@@ -43,7 +43,7 @@ func Defaults() Config {
 		MaxResults:     5,
 		SemanticWeight: 10.0, // seid search: semantic_weight
 		SemanticFloor:  0.5,
-		SemanticSlots:  3, // seid search: reserved semantic slots
+		SemanticSlots:  3,    // seid search: reserved semantic slots
 		RelativeFloor:  0.62, // e2e: weak neighbours land at 0.51-0.60 of the top hit
 		ListenAddr:     "127.0.0.1:7431",
 	}
