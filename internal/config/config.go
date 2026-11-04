@@ -15,11 +15,19 @@ import (
 
 // Config is the user-editable settings file (config.json in ConfigDir).
 type Config struct {
-	OllamaURL      string   `json:"ollama_url"`
-	EmbedModel     string   `json:"embed_model"`
-	EmbedDelayMS   int      `json:"embed_delay_ms"`
-	JcodeMemoryDir string   `json:"jcode_memory_dir"`
-	NotesRoots     []string `json:"notes_roots"`
+	OllamaURL      string `json:"ollama_url"`
+	EmbedModel     string `json:"embed_model"`
+	EmbedDelayMS   int    `json:"embed_delay_ms"`
+	JcodeMemoryDir string `json:"jcode_memory_dir"` // deprecated: use jcode_homes
+	// JcodeHomes are extra JCODE_HOME directories beyond ~/.jcode and the
+	// JCODE_INSTANCES registry found in ~/.zshrc.
+	JcodeHomes []string `json:"jcode_homes,omitempty"`
+	// JcodeDiscover turns off ~/.zshrc instance discovery when false.
+	JcodeDiscover *bool `json:"jcode_discover,omitempty"`
+	// JcodeShareGlobal lets per-project instances also recall memories of the
+	// global ~/.jcode instance. Off by default: instances exist for isolation.
+	JcodeShareGlobal bool     `json:"jcode_share_global,omitempty"`
+	NotesRoots       []string `json:"notes_roots"`
 	// Recall tuning.
 	MinScore       float64 `json:"min_score"`
 	MaxResults     int     `json:"max_results"`
@@ -42,11 +50,10 @@ type Config struct {
 
 // Defaults returns the built-in configuration.
 func Defaults() Config {
-	home, _ := os.UserHomeDir()
 	return Config{
 		OllamaURL:             "http://127.0.0.1:11434",
 		EmbedModel:            "nomic-embed-text",
-		JcodeMemoryDir:        filepath.Join(home, ".jcode", "memory"),
+		JcodeMemoryDir:        "",
 		MinScore:              6.0,
 		MaxResults:            5,
 		SemanticWeight:        10.0, // seid search: semantic_weight

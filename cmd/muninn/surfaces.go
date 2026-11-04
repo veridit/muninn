@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -93,8 +94,9 @@ var installers = map[string]func(bin string, install, dry bool) (harness.Install
 }
 
 func installLike(install bool) *cobra.Command {
-	var dry bool
+	var dry, allInstances bool
 	var bin string
+	var homes []string
 	use, short := "install <claude|codex|jcode|all>", "Wire automatic recall into a harness (keeps a backup)"
 	if !install {
 		use, short = "uninstall <claude|codex|jcode|all>", "Remove muninn's hook from a harness"
@@ -108,6 +110,12 @@ func installLike(install bool) *cobra.Command {
 			names = []string{"claude", "codex", "jcode"}
 		}
 		for _, n := range names {
+			if n == "jcode" && (allInstances || len(homes) > 0) {
+				if err := installJcodeInstances(bin, homes, allInstances, install, dry); err != nil {
+					return err
+				}
+				continue
+			}
 			f, ok := installers[n]
 			if !ok {
 				return fmt.Errorf("unknown harness %q", n)
@@ -125,6 +133,76 @@ func installLike(install bool) *cobra.Command {
 	}}
 	c.Flags().BoolVar(&dry, "dry-run", false, "show what would change")
 	c.Flags().StringVar(&bin, "bin", "", "muninn binary path to put in the hook (default: this binary)")
+	c.Flags().BoolVar(&allInstances, "all-instances", false, "jcode: every instance (~/.jcode, ~/.zshrc JCODE_INSTANCES, config jcode_homes)")
+	c.Flags().StringSliceVar(&homes, "jcode-home", nil, "jcode: a specific JCODE_HOME (repeatable)")
+	return c
+}
+
+func installJcodeInstances(bin string, homes []string, all, install, dry bool) error {
+	var targets []harness.JcodeInstance
+	if all {
+		if err := withApp(func(_ context.Context, a *app.App) error {
+			targets = a.JcodeInstances()
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	for _, h := range homes {
+		targets = append(targets, harness.InstanceForHome(targets, h))
+	}
+	seen := map[string]bool{}
+	for _, t := range targets {
+		if seen[t.Home] {
+			continue
+		}
+		seen[t.Home] = true
+		r, err := harness.InstallJcodeHome(t.Home, "jcode["+t.Name+"]", bin, install, dry)
+		if err != nil {
+			return fmt.Errorf("jcode[%s]: %w", t.Name, err)
+		}
+		if dry {
+			fmt.Print("[dry-run] ")
+		}
+		fmt.Println(r)
+	}
+	return nil
+}
+
+func jcodeCmd() *cobra.Command {
+	c := &cobra.Command{Use: "jcode", Short: "jcode integration helpers"}
+	c.AddCommand(&cobra.Command{Use: "instances", Short: "List jcode instances muninn knows about", RunE: func(*cobra.Command, []string) error {
+		return withApp(func(ctx context.Context, a *app.App) error {
+			counts := map[string]int{}
+			rows, err := a.DB.QueryContext(ctx, `SELECT scope, COUNT(*) FROM units WHERE active=1 AND scope LIKE 'jcode@%' GROUP BY scope`)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var s string
+				var n int
+				rows.Scan(&s, &n)
+				if i := strings.Index(s, ":"); i > 0 {
+					s = s[:i]
+				}
+				counts[s] += n
+			}
+			rows.Close()
+			fmt.Printf("%-26s %-8s %-6s %-9s %s\n", "INSTANCE", "MEMORIES", "BINARY", "HOOK", "JCODE_HOME")
+			for _, i := range a.JcodeInstances() {
+				hook := "no"
+				if harness.JcodeHookInstalled(i.Home) {
+					hook = "yes"
+				}
+				bin := "PATH"
+				if i.Binary() != "" {
+					bin = "own"
+				}
+				fmt.Printf("%-26s %-8d %-6s %-9s %s\n", i.Name, counts[i.Scope()], bin, hook, i.Home)
+			}
+			return nil
+		})
+	}})
 	return c
 }
 

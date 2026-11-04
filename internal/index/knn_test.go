@@ -184,6 +184,33 @@ func neighborChurn(t *testing.T, seed int64) {
 			t.Fatal(err)
 		}
 		checkNeighbors(t, db, round)
+		checkUnitCommunities(t, db, round)
 	}
 	_ = sql.ErrNoRows
+}
+
+// checkUnitCommunities asserts the incrementally maintained per-unit community
+// counts equal a from-scratch recomputation.
+func checkUnitCommunities(t *testing.T, db *store.DB, round int) {
+	t.Helper()
+	dump := func(q string) string {
+		rows, err := db.Query(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var s string
+		for rows.Next() {
+			var c, u, n int64
+			rows.Scan(&c, &u, &n)
+			s += fmt.Sprintf("%d/%d=%d ", c, u, n)
+		}
+		return s
+	}
+	want := dump(`SELECT c.community_id, uc.unit_id, COUNT(*) FROM unit_concepts uc
+	  JOIN communities c ON c.concept_id=uc.concept_id GROUP BY 1, 2 ORDER BY 1, 2`)
+	got := dump(`SELECT community_id, unit_id, n FROM unit_communities ORDER BY 1, 2`)
+	if got != want {
+		t.Fatalf("round %d: unit_communities drifted\n got %s\nwant %s", round, got, want)
+	}
 }

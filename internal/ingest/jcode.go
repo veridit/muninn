@@ -78,15 +78,16 @@ func ReadJcodeFile(path string) ([]Memory, error) {
 }
 
 // JcodeFiles lists jcode memory stores under dir: global.json and
-// projects/*.json. Scope is "global" or "jcode:<project-hash>".
-func JcodeFiles(dir string) (map[string]string, error) {
+// projects/*.json. Scope is "<prefix>" for global.json and
+// "<prefix>:<project-hash>" for project stores.
+func JcodeFiles(dir, prefix string) (map[string]string, error) {
 	files := map[string]string{}
 	if _, err := os.Stat(filepath.Join(dir, "global.json")); err == nil {
-		files[filepath.Join(dir, "global.json")] = "global"
+		files[filepath.Join(dir, "global.json")] = prefix
 	}
 	matches, _ := filepath.Glob(filepath.Join(dir, "projects", "*.json"))
 	for _, m := range matches {
-		files[m] = "jcode:" + strings.TrimSuffix(filepath.Base(m), ".json")
+		files[m] = prefix + ":" + strings.TrimSuffix(filepath.Base(m), ".json")
 	}
 	return files, nil
 }

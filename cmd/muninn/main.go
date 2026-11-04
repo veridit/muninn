@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"time"
 
@@ -32,8 +33,15 @@ func main() {
 	}
 	root.AddCommand(versionCmd(), indexCmd(), searchCmd(), recallCmd(), rememberCmd(), forgetCmd(),
 		listCmd(), relatedCmd(), statsCmd(), gcCmd(), hookCmd(), serveCmd(), mcpCmd(), tuiCmd(),
-		installCmd(), uninstallCmd(), configCmd())
+		installCmd(), uninstallCmd(), configCmd(), jcodeCmd())
+	if p := os.Getenv("MUNINN_CPUPROFILE"); p != "" {
+		if f, err := os.Create(p); err == nil {
+			pprof.StartCPUProfile(f)
+			defer pprof.StopCPUProfile()
+		}
+	}
 	if err := root.Execute(); err != nil {
+		pprof.StopCPUProfile()
 		fmt.Fprintln(os.Stderr, "muninn:", err)
 		os.Exit(1)
 	}
@@ -88,15 +96,21 @@ func printResults(res []search.Result, explain bool) {
 	}
 }
 
+const scopeHelp = "only these scopes (repeatable; trailing * is a prefix match, e.g. 'jcode@seid:*')"
+
 func searchCmd() *cobra.Command {
 	var limit int
 	var explain, asJSON bool
 	var minScore float64
+	var scopes []string
 	c := &cobra.Command{Use: "search <query>", Short: "Search memories (keyword + community + semantic)", Args: cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return withApp(func(ctx context.Context, a *app.App) error {
 				o := a.RecallOptions()
 				o.Limit, o.MinScore = limit, minScore
+				if len(scopes) > 0 {
+					o.Scopes = scopes
+				}
 				res, err := a.Searcher.Search(ctx, strings.Join(args, " "), o)
 				if err != nil {
 					return err
@@ -112,12 +126,14 @@ func searchCmd() *cobra.Command {
 	c.Flags().BoolVar(&explain, "explain", false, "show per-signal scores")
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 	c.Flags().Float64Var(&minScore, "min-score", 0, "drop results below this total")
+	c.Flags().StringSliceVar(&scopes, "scope", nil, scopeHelp)
 	return c
 }
 
 func recallCmd() *cobra.Command {
 	var session, harnessName string
 	var stdin bool
+	var scopes []string
 	c := &cobra.Command{Use: "recall [message]", Short: "Automatic-recall block for a message (generic harness entry point)",
 		RunE: func(_ *cobra.Command, args []string) error {
 			msg := strings.Join(args, " ")
@@ -129,7 +145,7 @@ func recallCmd() *cobra.Command {
 				if _, err := ensureFresh(ctx, a); err != nil {
 					return err
 				}
-				resp, err := a.Recall.Recall(ctx, recall.Request{Session: session, Harness: harnessName, Message: msg})
+				resp, err := a.Recall.Recall(ctx, recall.Request{Session: session, Harness: harnessName, Message: msg, Scopes: scopes})
 				if err != nil {
 					return err
 				}
@@ -142,6 +158,7 @@ func recallCmd() *cobra.Command {
 	c.Flags().StringVar(&session, "session", "", "session id for per-session dedupe")
 	c.Flags().StringVar(&harnessName, "harness", "cli", "harness name for the injection log")
 	c.Flags().BoolVar(&stdin, "stdin", false, "read the message from stdin")
+	c.Flags().StringSliceVar(&scopes, "scope", nil, scopeHelp)
 	return c
 }
 
@@ -289,18 +306,41 @@ func runHook(name string, budget time.Duration) error {
 		if sid == "" {
 			return nil
 		}
-		home, _ := os.UserHomeDir()
-		msg, err := harness.JcodeLastUserMessage(filepath.Join(home, ".jcode", "sessions"), sid)
+		// Each jcode instance runs with its own JCODE_HOME; the hook inherits
+		// it. Use that instance's sessions, binary and memories only.
+		jh := os.Getenv("JCODE_HOME")
+		if jh == "" {
+			home, _ := os.UserHomeDir()
+			jh = filepath.Join(home, ".jcode")
+		}
+		msg, err := harness.JcodeLastUserMessage(filepath.Join(jh, "sessions"), sid)
 		if err != nil {
 			return err
 		}
-		resp, err := hookRecall(ctx, name, sid, msg)
-		if err != nil || resp.Block == "" {
-			logHook("jcode %s: msg=%q hits=0 skipped=%q elapsed=%s", short(sid), recall.Truncate(msg, 60), resp.Skipped, resp.Elapsed)
+		a, err := app.Open(ctx)
+		if err != nil {
 			return err
 		}
-		out, err := exec.CommandContext(ctx, "jcode", "transcript", "--mode", "send", "-S", sid, resp.Block).CombinedOutput()
-		logHook("jcode %s: msg=%q hits=%d elapsed=%s transcript_err=%v %s", short(sid), recall.Truncate(msg, 60),
+		defer a.Close()
+		inst := harness.InstanceForHome(a.JcodeInstances(), jh)
+		resp, err := hookRecallWith(ctx, a, name, sid, msg, jcodeRecallScopes(inst, a.Cfg.JcodeShareGlobal))
+		if err != nil || resp.Block == "" {
+			logHook("jcode[%s] %s: msg=%q hits=0 skipped=%q elapsed=%s", inst.Name, short(sid), recall.Truncate(msg, 60), resp.Skipped, resp.Elapsed)
+			return err
+		}
+		bin := inst.Binary()
+		if bin == "" {
+			bin = "jcode"
+		}
+		cmd := exec.CommandContext(ctx, bin, "transcript", "--mode", "send", "-S", sid, resp.Block)
+		cmd.Env = append(os.Environ(), "JCODE_HOME="+inst.Home)
+		if os.Getenv("JCODE_RUNTIME_DIR") == "" {
+			if rt := filepath.Join(inst.Home, "runtime"); dirExists(rt) {
+				cmd.Env = append(cmd.Env, "JCODE_RUNTIME_DIR="+rt)
+			}
+		}
+		out, err := cmd.CombinedOutput()
+		logHook("jcode[%s] %s: msg=%q hits=%d elapsed=%s transcript_err=%v %s", inst.Name, short(sid), recall.Truncate(msg, 60),
 			len(resp.Hits), resp.Elapsed, err, strings.TrimSpace(string(out)))
 		return err
 	default:
@@ -314,10 +354,30 @@ func hookRecall(ctx context.Context, harnessName, session, msg string) (recall.R
 		return recall.Response{}, err
 	}
 	defer a.Close()
+	return hookRecallWith(ctx, a, harnessName, session, msg, nil)
+}
+
+func hookRecallWith(ctx context.Context, a *app.App, harnessName, session, msg string, scopes []string) (recall.Response, error) {
 	if _, err := ensureFresh(ctx, a); err != nil {
 		logHook("reindex: %v", err)
 	}
-	return a.Recall.Recall(ctx, recall.Request{Session: harnessName + ":" + session, Harness: harnessName, Message: msg})
+	return a.Recall.Recall(ctx, recall.Request{Session: harnessName + ":" + session, Harness: harnessName, Message: msg, Scopes: scopes})
+}
+
+// jcodeRecallScopes keeps client instances isolated: a session sees its own
+// instance's memories and muninn's own memories ("global" scope), never
+// another instance's. shareGlobal also admits the global ~/.jcode instance.
+func jcodeRecallScopes(inst harness.JcodeInstance, shareGlobal bool) []string {
+	scopes := []string{inst.Scope(), inst.Scope() + ":*", "global"}
+	if shareGlobal && inst.Name != "global" {
+		scopes = append(scopes, "jcode@global", "jcode@global:*")
+	}
+	return scopes
+}
+
+func dirExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
 
 func short(s string) string {

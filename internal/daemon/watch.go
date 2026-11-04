@@ -38,9 +38,9 @@ func Watch(ctx context.Context, a *app.App, mu *sync.Mutex, logf func(string, ..
 			}
 		}
 	}
-	if o.JcodeDir != "" {
-		add(o.JcodeDir)
-		add(filepath.Join(o.JcodeDir, "projects"))
+	for _, j := range o.Jcode {
+		add(j.Dir)
+		add(filepath.Join(j.Dir, "projects"))
 	}
 	os.MkdirAll(filepath.Dir(o.NativePath), 0o700)
 	add(filepath.Dir(o.NativePath))

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,7 +72,7 @@ func (ix *Indexer) loadGraph() (*Graph, error) {
 	return g, nil
 }
 
-func (ix *Indexer) saveGraph(g *Graph, touched map[int]bool) error {
+func (ix *Indexer) saveGraph(g *Graph, touched map[int]bool, units map[int64]bool) error {
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(g); err != nil {
 		return err
@@ -79,19 +80,75 @@ func (ix *Indexer) saveGraph(g *Graph, touched map[int]bool) error {
 	if _, err := ix.DB.Exec(`INSERT INTO graph_state(id, state) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET state=excluded.state`, buf.Bytes()); err != nil {
 		return err
 	}
-	// Persist community assignments for concepts whose community may have moved.
+	// Persist community assignments for concepts whose community may have
+	// moved, and collect the units whose per-community counts go stale.
+	var moved []string
 	for c := range touched {
+		var old int
+		err := ix.DB.QueryRow(`SELECT community_id FROM communities WHERE concept_id=?`, c).Scan(&old)
+		if err == nil && old == g.Community[c] {
+			continue
+		}
 		if _, err := ix.DB.Exec(`INSERT INTO communities(concept_id, community_id) VALUES(?,?)
 		  ON CONFLICT(concept_id) DO UPDATE SET community_id=excluded.community_id`, c, g.Community[c]); err != nil {
+			return err
+		}
+		moved = append(moved, strconv.Itoa(c))
+	}
+	for start := 0; start < len(moved); start += 500 {
+		rows, err := ix.DB.Query(`SELECT DISTINCT unit_id FROM unit_concepts WHERE concept_id IN (` +
+			strings.Join(moved[start:min(start+500, len(moved))], ",") + `)`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var u int64
+			rows.Scan(&u)
+			units[u] = true
+		}
+		rows.Close()
+	}
+	return ix.refreshUnitCommunities(units)
+}
+
+// refreshUnitCommunities recomputes per-community concept counts of units.
+func (ix *Indexer) refreshUnitCommunities(units map[int64]bool) error {
+	ids := make([]string, 0, len(units))
+	for u := range units {
+		ids = append(ids, strconv.FormatInt(u, 10))
+	}
+	for start := 0; start < len(ids); start += 500 {
+		list := strings.Join(ids[start:min(start+500, len(ids))], ",")
+		if _, err := ix.DB.Exec(`DELETE FROM unit_communities WHERE unit_id IN (` + list + `)`); err != nil {
+			return err
+		}
+		if _, err := ix.DB.Exec(`INSERT INTO unit_communities(community_id, unit_id, n)
+		  SELECT c.community_id, uc.unit_id, COUNT(*) FROM unit_concepts uc
+		  JOIN communities c ON c.concept_id=uc.concept_id
+		  WHERE uc.unit_id IN (` + list + `) GROUP BY 1, 2`); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+func dirtyUnits(ids []int64) map[int64]bool {
+	m := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
+}
+
+// JcodeSource is one jcode instance's memory directory and its scope prefix.
+type JcodeSource struct {
+	Dir    string // <JCODE_HOME>/memory
+	Prefix string // "jcode@<instance>"
+}
+
 // Options controls one indexing pass.
 type Options struct {
-	JcodeDir   string
+	Jcode      []JcodeSource
 	NativePath string
 	NotesRoots []string
 }
@@ -116,7 +173,23 @@ func (ix *Indexer) Run(ctx context.Context, o Options) (Stats, error) {
 	return st, nil
 }
 
+// SourceRecipe versions how sources are turned into units (keys, scopes,
+// metadata). Bumping it makes the next pass re-read every source once even
+// if its (mtime, size) is unchanged. Text that did not change keeps its
+// content hash, so nothing is re-embedded.
+//
+//	2: per-instance jcode scopes ("jcode@<instance>[:<project>]")
+const SourceRecipe = "2"
+
 func (ix *Indexer) run(ctx context.Context, o Options) (Stats, error) {
+	if ix.DB.GetMeta("source_recipe") != SourceRecipe {
+		if _, err := ix.DB.Exec(`UPDATE sources SET mtime_ns=-1, size=-1`); err != nil {
+			return Stats{}, err
+		}
+		if err := ix.DB.SetMeta("source_recipe", SourceRecipe); err != nil {
+			return Stats{}, err
+		}
+	}
 	t0 := time.Now()
 	var st Stats
 	ix.deltas = nil
@@ -125,9 +198,9 @@ func (ix *Indexer) run(ctx context.Context, o Options) (Stats, error) {
 		dirty, removed = append(dirty, d...), append(removed, r...)
 		return err
 	}
-	if o.JcodeDir != "" {
-		if _, err := os.Stat(o.JcodeDir); err == nil {
-			if err := collect(ix.IndexJcode(ctx, o.JcodeDir, &st)); err != nil {
+	for _, j := range o.Jcode {
+		if _, err := os.Stat(j.Dir); err == nil {
+			if err := collect(ix.IndexJcode(ctx, j.Dir, j.Prefix, &st)); err != nil {
 				return st, err
 			}
 		}
@@ -168,7 +241,7 @@ func (ix *Indexer) run(ctx context.Context, o Options) (Stats, error) {
 				}
 			}
 		}
-		if err := ix.saveGraph(g, touched); err != nil {
+		if err := ix.saveGraph(g, touched, dirtyUnits(dirty)); err != nil {
 			return st, err
 		}
 	}

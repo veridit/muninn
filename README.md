@@ -71,6 +71,7 @@ On an Apple M1 Max, synthetic data (`go test ./internal/index -run Scale -v`):
 | Search over 2000 memories | 31 ms |
 | One `muninn recall` process, 5 synthetic memories, real Ollama | 60-90 ms |
 | One hook call, 960 real memories, real Ollama (model warm) | 110-180 ms |
+| One `muninn recall` process, 16,600 real memories in 6 jcode instances, scoped to one | 170-210 ms |
 
 The first hook call after Ollama has unloaded the embedding model pays a
 model load (measured 420-650 ms). muninn asks Ollama to keep the ~300 MB
@@ -109,6 +110,7 @@ muninn serve                         # watcher + web UI on http://127.0.0.1:7431
 muninn install claude   # ~/.claude/settings.json  UserPromptSubmit -> additionalContext
 muninn install codex    # ~/.codex/hooks.json; then trust the hook in Codex with /hooks
 muninn install jcode    # ~/.jcode/config.toml [hooks] turn_start
+muninn install jcode --all-instances   # every jcode instance (see below)
 muninn install all --dry-run
 muninn uninstall all
 ```
@@ -125,9 +127,31 @@ Installers are idempotent, keep a timestamped backup, and leave your other hooks
 MCP tools: `memory_search`, `memory_recall`, `memory_remember`, `memory_forget`,
 `memory_related`, `memory_stats`.
 
+### Several jcode instances
+
+If you run isolated jcode instances (one `JCODE_HOME` per client or project),
+muninn indexes each one separately and keeps them apart:
+
+- Each instance's memories get the scope `jcode@<instance>` (instance-wide) or
+  `jcode@<instance>:<project>`.
+- A hook running inside an instance recalls only that instance's memories plus
+  muninn's own `global` memories. Nothing crosses from one client to another.
+  Set `jcode_share_global: true` to also share the default `~/.jcode` memories.
+- The hook uses the instance's own `bin/jcode` and `runtime/`.
+
+Instances are found in `~/.jcode`, in a zsh `typeset -gA JCODE_INSTANCES=(name root ...)`
+(read as text, never executed), and in `jcode_homes` in the config.
+
+```sh
+muninn jcode instances                     # name, memories, hook installed?, JCODE_HOME
+muninn install jcode --all-instances --dry-run
+muninn install jcode --jcode-home ~/client/.jcode
+muninn search --scope 'jcode@client*' "deploy"
+```
+
 ### Sources
 
-- **jcode memories**: `~/.jcode/memory/global.json` and `projects/*.json`, read-only.
+- **jcode memories**: `<JCODE_HOME>/memory/global.json` and `projects/*.json` of every instance, read-only.
 - **muninn memories**: created with `muninn remember`, the web UI or MCP.
 - **Markdown notes**: set `notes_roots` in the config. Files are split at headings.
 
@@ -151,6 +175,7 @@ scripts/install-hooks.sh   # pre-commit secret scan
 go test ./...
 scripts/e2e.sh             # real Ollama, synthetic data, throwaway home
 scripts/hooks-e2e.sh       # Claude/Codex hook protocol, dedupe, loop guard, web API
+scripts/jcode-instances-e2e.sh  # two isolated jcode instances: install, hook, no leakage
 python3 scripts/mcp-e2e.py bin/muninn
 ```
 

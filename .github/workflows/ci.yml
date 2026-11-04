@@ -38,3 +38,8 @@ jobs:
         run: go build ./cmd/muninn
         env:
           CGO_ENABLED: "0"
+      - name: jcode multi-instance e2e (keyword-only)
+        if: runner.os != 'Windows'
+        run: ./scripts/jcode-instances-e2e.sh
+        env:
+          MUNINN_NO_EMBED: "1"

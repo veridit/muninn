@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/veridit/muninn/internal/embed"
@@ -161,10 +162,9 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 		}
 		rows.Close()
 		// 2+4. community expansion: 1 point per other concept of the query communities.
-		rows, err = s.DB.QueryContext(ctx, `SELECT uc.unit_id, COUNT(*) FROM unit_concepts uc
-		  JOIN communities c ON c.concept_id = uc.concept_id
-		  WHERE c.community_id IN (SELECT DISTINCT community_id FROM communities WHERE concept_id IN (`+ids+`))
-		  GROUP BY uc.unit_id`)
+		rows, err = s.DB.QueryContext(ctx, `SELECT unit_id, SUM(n) FROM unit_communities
+		  WHERE community_id IN (SELECT DISTINCT community_id FROM communities WHERE concept_id IN (`+ids+`))
+		  GROUP BY unit_id`)
 		if err != nil {
 			return nil, err
 		}
@@ -334,57 +334,72 @@ func (s *Searcher) semantic(ctx context.Context, q []float32, o Options, out map
 	if pipeline == "" {
 		pipeline = index.PipelineHash(s.Embedder.Model())
 	}
-	var n int
-	s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings WHERE pipeline_hash=?`, pipeline).Scan(&n)
-	allow := map[int64]bool(nil)
-	if n > PrefilterAbove {
-		allow = map[int64]bool{}
-		qs := embed.Sketch(q)
-		type hd struct {
-			id int64
-			d  int
+	// Candidates: active units in scope with a vector, read from the narrow
+	// sketches table (scope and kind filters apply before any vector work).
+	qs := embed.Sketch(q)
+	type hd struct {
+		id int64
+		d  int
+	}
+	var all []hd
+	where, args := scopeSQL("u.scope", o.Scopes)
+	rows, err := s.DB.QueryContext(ctx, `SELECT u.id, u.scope, u.kind, s.sketch FROM units u JOIN sketches s
+	  ON s.content_hash=u.content_hash AND s.pipeline_hash=? WHERE u.active=1 AND (`+where+`)`, append([]any{pipeline}, args...)...)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id int64
+		var scope, kind string
+		var sk []byte
+		if err := rows.Scan(&id, &scope, &kind, &sk); err != nil {
+			rows.Close()
+			return err
 		}
-		var all []hd
-		rows, err := s.DB.QueryContext(ctx, `SELECT u.id, e.sketch FROM units u JOIN embeddings e
-		  ON e.content_hash=u.content_hash AND e.pipeline_hash=? WHERE u.active=1`, pipeline)
+		if !allowed(scope, o.Scopes) || !allowed(kind, o.Kinds) {
+			continue
+		}
+		all = append(all, hd{id, embed.Hamming(qs, sk)})
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	// Measured on 5000 random 768-d vectors: keep 256 -> recall@5 0.83,
+	// 512 -> 0.91, 1024 -> 0.98. 1024 rescored dot products are cheap.
+	if keep := max(1024, 32*o.Limit); len(all) > PrefilterAbove && len(all) > keep {
+		sort.Slice(all, func(i, j int) bool { return all[i].d < all[j].d })
+		all = all[:keep]
+	}
+	// Exact rescore: fetch float32 vectors for the candidates only.
+	const batch = 500
+	for start := 0; start < len(all); start += batch {
+		ids := make([]string, 0, batch)
+		for _, c := range all[start:min(start+batch, len(all))] {
+			ids = append(ids, strconv.FormatInt(c.id, 10))
+		}
+		rows, err := s.DB.QueryContext(ctx, `SELECT u.id, e.vec FROM units u JOIN embeddings e
+		  ON e.content_hash=u.content_hash AND e.pipeline_hash=? WHERE u.id IN (`+strings.Join(ids, ",")+`)`, pipeline)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var id int64
-			var sk []byte
-			rows.Scan(&id, &sk)
-			all = append(all, hd{id, embed.Hamming(qs, sk)})
+			var blob []byte
+			if err := rows.Scan(&id, &blob); err != nil {
+				rows.Close()
+				return err
+			}
+			if sim := float64(embed.Dot(q, embed.DecodeF32(blob))); sim > o.SemanticFloor {
+				out[id] = sim
+			}
 		}
 		rows.Close()
-		sort.Slice(all, func(i, j int) bool { return all[i].d < all[j].d })
-		// Measured on 5000 random 768-d vectors: keep 256 -> recall@5 0.83,
-		// 512 -> 0.91, 1024 -> 0.98. 1024 rescored dot products are cheap.
-		keep := max(1024, 32*o.Limit)
-		for i := 0; i < len(all) && i < keep; i++ {
-			allow[all[i].id] = true
-		}
-	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT u.id, e.vec FROM units u JOIN embeddings e
-	  ON e.content_hash=u.content_hash AND e.pipeline_hash=? WHERE u.active=1`, pipeline)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id int64
-		var blob []byte
-		if err := rows.Scan(&id, &blob); err != nil {
+		if err := rows.Err(); err != nil {
 			return err
 		}
-		if allow != nil && !allow[id] {
-			continue
-		}
-		if sim := float64(embed.Dot(q, embed.DecodeF32(blob))); sim > o.SemanticFloor {
-			out[id] = sim
-		}
 	}
-	return rows.Err()
+	return nil
 }
 
 // Related returns a unit's stored nearest neighbours.
@@ -415,12 +430,38 @@ func (s *Searcher) Related(ctx context.Context, unitID int64, limit int) ([]Resu
 	return out, nil
 }
 
+// scopeSQL turns a scope set into an index-friendly predicate: exact entries
+// become equality, "prefix*" entries become a half-open range. allowed()
+// remains the authority; this only narrows what SQLite reads.
+func scopeSQL(col string, set []string) (string, []any) {
+	if len(set) == 0 {
+		return "1", nil
+	}
+	var parts []string
+	var args []any
+	for _, s := range set {
+		if p, ok := strings.CutSuffix(s, "*"); ok {
+			if p == "" {
+				return "1", nil
+			}
+			parts = append(parts, "("+col+" >= ? AND "+col+" < ?)")
+			args = append(args, p, p+"\U0010FFFF")
+		} else {
+			parts = append(parts, col+" = ?")
+			args = append(args, s)
+		}
+	}
+	return strings.Join(parts, " OR "), args
+}
+
+// allowed reports whether v is permitted by set. An entry ending in "*" is a
+// prefix match ("jcode@brovs*" admits "jcode@brovs" and "jcode@brovs:abc").
 func allowed(v string, set []string) bool {
 	if len(set) == 0 {
 		return true
 	}
 	for _, s := range set {
-		if s == v {
+		if s == v || (strings.HasSuffix(s, "*") && strings.HasPrefix(v, s[:len(s)-1])) {
 			return true
 		}
 	}

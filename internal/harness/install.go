@@ -166,12 +166,17 @@ func InstallCodex(bin string, install, dry bool) (InstallResult, error) {
 	return r, err
 }
 
-// InstallJcode wires `muninn hook jcode` into [hooks] turn_start of
+// InstallJcode wires `muninn hook jcode` into [hooks] turn_start of the global
 // ~/.jcode/config.toml with a minimal line edit that keeps other hooks.
 func InstallJcode(bin string, install, dry bool) (InstallResult, error) {
 	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, ".jcode", "config.toml")
-	res := InstallResult{Harness: "jcode", File: path}
+	return InstallJcodeHome(filepath.Join(home, ".jcode"), "jcode", bin, install, dry)
+}
+
+// InstallJcodeHome does the same for one instance's JCODE_HOME.
+func InstallJcodeHome(jcodeHome, label, bin string, install, dry bool) (InstallResult, error) {
+	path := filepath.Join(jcodeHome, "config.toml")
+	res := InstallResult{Harness: label, File: path}
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return res, err
@@ -192,6 +197,17 @@ func InstallJcode(bin string, install, dry bool) (InstallResult, error) {
 }
 
 const jcodeMarker = "# muninn: automatic local memory recall"
+
+// JcodeHookInstalled reports whether a jcode config.toml already runs muninn.
+func JcodeHookInstalled(jcodeHome string) bool {
+	b, err := os.ReadFile(filepath.Join(jcodeHome, "config.toml"))
+	if err != nil {
+		return false
+	}
+	// Removing muninn would change the file exactly when it is installed.
+	_, changed, err := editJcodeTurnStart(string(b), "muninn hook jcode", false)
+	return err == nil && changed
+}
 
 // editJcodeTurnStart edits the turn_start key inside [hooks]. jcode accepts a
 // string or an array of strings, so an existing hook is kept alongside muninn.

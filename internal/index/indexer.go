@@ -120,9 +120,10 @@ func statOf(path string) (int64, int64, error) {
 	return fi.ModTime().UnixNano(), fi.Size(), nil
 }
 
-// IndexJcode indexes jcode memory stores under dir.
-func (ix *Indexer) IndexJcode(ctx context.Context, dir string, st *Stats) ([]int64, []int64, error) {
-	files, err := ingest.JcodeFiles(dir)
+// IndexJcode indexes the jcode memory store under dir with scope prefix
+// (e.g. "jcode@brovs").
+func (ix *Indexer) IndexJcode(ctx context.Context, dir, prefix string, st *Stats) ([]int64, []int64, error) {
+	files, err := ingest.JcodeFiles(dir, prefix)
 	if err != nil {
 		return nil, nil, err
 	}

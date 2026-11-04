@@ -62,6 +62,9 @@ CREATE TABLE IF NOT EXISTS units (
   UNIQUE(source_id, key)
 );
 CREATE INDEX IF NOT EXISTS units_hash ON units(content_hash);
+-- Covering index for scoped candidate scans (search never reads unit bodies
+-- until the final few results).
+CREATE INDEX IF NOT EXISTS units_scope ON units(scope, active, kind, content_hash);
 CREATE VIRTUAL TABLE IF NOT EXISTS units_fts USING fts5(title, body, tags, content='units', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS units_ai AFTER INSERT ON units BEGIN
   INSERT INTO units_fts(rowid, title, body, tags) VALUES (new.id, new.title, new.body, new.tags);
@@ -84,6 +87,14 @@ CREATE TABLE IF NOT EXISTS embeddings (
   sketch BLOB NOT NULL,   -- 1-bit sign sketch (32x smaller) for Hamming prefilter
   PRIMARY KEY (content_hash, pipeline_hash)
 );
+-- Narrow copy of the sketches so the Hamming prefilter reads ~100 bytes per
+-- unit instead of every 4 KB embeddings row.
+CREATE TABLE IF NOT EXISTS sketches (
+  content_hash TEXT NOT NULL,
+  pipeline_hash TEXT NOT NULL,
+  sketch BLOB NOT NULL,
+  PRIMARY KEY (content_hash, pipeline_hash)
+) WITHOUT ROWID;
 -- Incremental neighbour graph (k nearest by cosine), maintained per dirty unit.
 CREATE TABLE IF NOT EXISTS neighbors (
   unit_id INTEGER NOT NULL,
@@ -100,6 +111,14 @@ CREATE TABLE IF NOT EXISTS unit_concepts (
 );
 CREATE INDEX IF NOT EXISTS unit_concepts_c ON unit_concepts(concept_id);
 CREATE TABLE IF NOT EXISTS communities (concept_id INTEGER PRIMARY KEY, community_id INTEGER NOT NULL);
+-- Per-unit concept counts by community (as in seid search's
+-- section_communities): community expansion reads this instead of joining
+-- every unit_concepts row of the query communities.
+CREATE TABLE IF NOT EXISTS unit_communities (
+  community_id INTEGER NOT NULL, unit_id INTEGER NOT NULL, n INTEGER NOT NULL,
+  PRIMARY KEY (community_id, unit_id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS unit_communities_u ON unit_communities(unit_id);
 -- Persisted DF-Louvain state (gob), so incremental updates resume exactly.
 CREATE TABLE IF NOT EXISTS graph_state (id INTEGER PRIMARY KEY CHECK (id = 1), state BLOB NOT NULL);
 -- Recall injections, for per-session dedupe and the web/TUI log.
@@ -125,7 +144,10 @@ func Open(path string) (*DB, error) {
 			os.Chmod(p, 0o600)
 		}
 	}
-	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
+	// mmap: search scans the narrow tables; through the default pager every
+	// page was a pread syscall (profiled at ~65% of a warm search).
+	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)" +
+		"&_pragma=mmap_size(1073741824)&_pragma=cache_size(-32768)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -134,6 +156,25 @@ func Open(path string) (*DB, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("schema: %w", err)
+	}
+	// One-time backfill for indexes written before the sketches table existed.
+	var have, want int
+	db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sketches), EXISTS(SELECT 1 FROM embeddings)`).Scan(&have, &want)
+	if have == 0 && want == 1 {
+		if _, err := db.Exec(`INSERT OR IGNORE INTO sketches(content_hash, pipeline_hash, sketch)
+		  SELECT content_hash, pipeline_hash, sketch FROM embeddings`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("backfill sketches: %w", err)
+		}
+	}
+	db.QueryRow(`SELECT EXISTS(SELECT 1 FROM unit_communities), EXISTS(SELECT 1 FROM communities)`).Scan(&have, &want)
+	if have == 0 && want == 1 {
+		if _, err := db.Exec(`INSERT INTO unit_communities(community_id, unit_id, n)
+		  SELECT c.community_id, uc.unit_id, COUNT(*) FROM unit_concepts uc
+		  JOIN communities c ON c.concept_id=uc.concept_id GROUP BY 1, 2`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("backfill unit_communities: %w", err)
+		}
 	}
 	return &DB{DB: db, Path: path}, nil
 }
@@ -204,6 +245,7 @@ func (d *DB) UpsertUnit(u Unit) (int64, error) {
 func (d *DB) DeleteUnit(id int64) error {
 	for _, q := range []string{
 		`DELETE FROM unit_concepts WHERE unit_id=?`,
+		`DELETE FROM unit_communities WHERE unit_id=?`,
 		`DELETE FROM units WHERE id=?`,
 	} {
 		if _, err := d.Exec(q, id); err != nil {
@@ -238,6 +280,10 @@ func (d *DB) HasEmbedding(hash, pipeline string) bool {
 func (d *DB) PutEmbedding(hash, pipeline string, dim int, vec, qvec, sketch []byte) error {
 	_, err := d.Exec(`INSERT OR REPLACE INTO embeddings(content_hash, pipeline_hash, dim, vec, qvec, sketch) VALUES(?,?,?,?,?,?)`,
 		hash, pipeline, dim, vec, qvec, sketch)
+	if err != nil {
+		return err
+	}
+	_, err = d.Exec(`INSERT OR REPLACE INTO sketches(content_hash, pipeline_hash, sketch) VALUES(?,?,?)`, hash, pipeline, sketch)
 	return err
 }
 
@@ -245,6 +291,9 @@ func (d *DB) PutEmbedding(hash, pipeline string, dim int, vec, qvec, sketch []by
 func (d *DB) GC(pipeline string) (int64, error) {
 	res, err := d.Exec(`DELETE FROM embeddings WHERE pipeline_hash<>? OR content_hash NOT IN (SELECT content_hash FROM units)`, pipeline)
 	if err != nil {
+		return 0, err
+	}
+	if _, err := d.Exec(`DELETE FROM sketches WHERE pipeline_hash<>? OR content_hash NOT IN (SELECT content_hash FROM units)`, pipeline); err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
