@@ -100,14 +100,18 @@ release's SHA-256 sums; `install.sh` verifies the archive the same way.
 Recent Homebrew asks you to trust a third-party formula once (`brew trust`);
 upgrades need nothing extra.
 
-Semantic search uses a local [Ollama](https://ollama.com) embedding model when
-one is running:
+Semantic search needs an embedding model, and muninn brings its own:
+`muninn install` downloads **snowflake-arctic-embed-s** once (~127 MB,
+Apache-2.0, pinned to an exact revision and SHA-256-verified) and runs it in
+pure Go, no Ollama or Python needed. With `muninn serve` running (for example
+`brew services start muninn`) the model stays loaded and a hook's recall takes
+~30 ms; without it each hook loads the model (~0.2 s).
 
-```sh
-ollama pull nomic-embed-text
-```
-
-Without Ollama, muninn falls back to keyword and concept matching.
+If a local [Ollama](https://ollama.com) with `nomic-embed-text` is running,
+muninn uses that instead (GPU-accelerated, faster bulk indexing). Choose
+explicitly with `"embedder": "builtin" | "ollama" | "none"` in the config;
+`muninn model status` shows what is in use. Without any model, muninn falls
+back to keyword and concept matching.
 
 ## Use
 

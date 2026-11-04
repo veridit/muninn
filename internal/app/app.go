@@ -20,7 +20,8 @@ import (
 type App struct {
 	Cfg      config.Config
 	DB       *store.DB
-	Embedder embed.Embedder // nil when Ollama is unreachable
+	Embedder embed.Embedder // nil = keyword-only
+	EmbedNote string        // which embedder was chosen and why
 	Indexer  *index.Indexer
 	Searcher *search.Searcher
 	Recall   *recall.Engine
@@ -40,17 +41,60 @@ func Open(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 	a := &App{Cfg: cfg, DB: db}
-	if os.Getenv("MUNINN_NO_EMBED") == "" {
-		o := embed.NewOllama(cfg.OllamaURL, cfg.EmbedModel, time.Duration(cfg.EmbedDelayMS)*time.Millisecond)
-		if o.Available(ctx) {
-			a.Embedder = o
-		}
-	}
+	a.Embedder, a.EmbedNote = pickEmbedder(ctx, cfg)
 	a.Indexer = &index.Indexer{DB: db, Embedder: a.Embedder}
 	a.Searcher = &search.Searcher{DB: db, Embedder: a.Embedder}
+	minSem, minFull := cfg.RecallMinSemantic, cfg.RecallMinSemanticFull
+	if a.Embedder != nil && a.Embedder.Model() == embed.Builtin.Name {
+		minSem, minFull = cfg.BuiltinMinSemantic, cfg.BuiltinMinSemanticFull
+	}
 	a.Recall = &recall.Engine{DB: db, Searcher: a.Searcher, Options: a.RecallOptions(),
-		RelativeFloor: cfg.RelativeFloor, MinSemantic: cfg.RecallMinSemantic, MinSemanticFull: cfg.RecallMinSemanticFull}
+		RelativeFloor: cfg.RelativeFloor, MinSemantic: minSem, MinSemanticFull: minFull}
 	return a, nil
+}
+
+// pickEmbedder resolves cfg.Embedder. For the built-in model it prefers a
+// running `muninn serve` (model already loaded) over loading it in-process.
+func pickEmbedder(ctx context.Context, cfg config.Config) (embed.Embedder, string) {
+	if os.Getenv("MUNINN_NO_EMBED") != "" || cfg.Embedder == "none" {
+		return nil, "keyword-only (embedder disabled)"
+	}
+	ollama := func() embed.Embedder {
+		o := embed.NewOllama(cfg.OllamaURL, cfg.EmbedModel, time.Duration(cfg.EmbedDelayMS)*time.Millisecond)
+		if o.Available(ctx) {
+			return o
+		}
+		return nil
+	}
+	builtin := func() (embed.Embedder, string) {
+		if os.Getenv("MUNINN_SERVE") == "" {
+			if r := embed.DialRemote(ctx, cfg.ListenAddr, embed.Builtin.Name); r != nil {
+				return r, "built-in model via muninn serve"
+			}
+		}
+		l, err := embed.NewLocal(config.DataDir())
+		if err != nil {
+			return nil, err.Error()
+		}
+		return l, "built-in model (in-process)"
+	}
+	switch cfg.Embedder {
+	case "ollama":
+		if o := ollama(); o != nil {
+			return o, "ollama " + cfg.EmbedModel
+		}
+		return nil, "keyword-only (Ollama not reachable at " + cfg.OllamaURL + ")"
+	case "builtin":
+		return builtin()
+	default: // auto
+		if o := ollama(); o != nil {
+			return o, "ollama " + cfg.EmbedModel
+		}
+		if e, note := builtin(); e != nil {
+			return e, note
+		}
+		return nil, "keyword-only (no Ollama, built-in model not downloaded: run `muninn model download`)"
+	}
 }
 
 // Close releases the database.

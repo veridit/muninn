@@ -35,7 +35,7 @@ func main() {
 	}
 	root.AddCommand(versionCmd(), indexCmd(), searchCmd(), recallCmd(), rememberCmd(), forgetCmd(),
 		listCmd(), relatedCmd(), statsCmd(), gcCmd(), hookCmd(), serveCmd(), mcpCmd(), tuiCmd(),
-		installCmd(), uninstallCmd(), configCmd(), jcodeCmd(), importCmd(), projectCmd(), syncCmd())
+		installCmd(), uninstallCmd(), configCmd(), jcodeCmd(), importCmd(), projectCmd(), syncCmd(), modelCmd())
 	if p := os.Getenv("MUNINN_CPUPROFILE"); p != "" {
 		if f, err := os.Create(p); err == nil {
 			pprof.StartCPUProfile(f)
@@ -68,9 +68,7 @@ func versionCmd() *cobra.Command {
 func indexCmd() *cobra.Command {
 	return &cobra.Command{Use: "index", Short: "Incrementally index all configured sources", RunE: func(*cobra.Command, []string) error {
 		return withApp(func(ctx context.Context, a *app.App) error {
-			if a.Embedder == nil {
-				fmt.Fprintln(os.Stderr, "note: Ollama not reachable at", a.Cfg.OllamaURL, "- keyword-only until it is")
-			}
+			fmt.Fprintln(os.Stderr, "embedder:", a.EmbedNote)
 			st, err := a.Reindex(ctx)
 			if err != nil {
 				return err

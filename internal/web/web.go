@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/veridit/muninn/internal/app"
+	embedpkg "github.com/veridit/muninn/internal/embed"
 	"github.com/veridit/muninn/internal/ingest"
 	"github.com/veridit/muninn/internal/recall"
 	"github.com/veridit/muninn/internal/search"
@@ -171,6 +172,32 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		writeJSON(w, st)
+	})
+	// Embedding for hooks: serve keeps the built-in model loaded so a hook
+	// process need not load ~560 MB per prompt. GET reports the model.
+	mux.HandleFunc("GET /api/embed", func(w http.ResponseWriter, r *http.Request) {
+		if s.App.Embedder == nil {
+			fail(w, http.StatusServiceUnavailable, errors.New("no embedder"))
+			return
+		}
+		writeJSON(w, embedpkg.EmbedResponse{Model: s.App.Embedder.Model()})
+	})
+	mux.HandleFunc("POST /api/embed", func(w http.ResponseWriter, r *http.Request) {
+		if s.App.Embedder == nil {
+			fail(w, http.StatusServiceUnavailable, errors.New("no embedder"))
+			return
+		}
+		var in embedpkg.EmbedRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&in); err != nil || len(in.Texts) > 256 {
+			fail(w, 400, errors.New("want {\"texts\": [...]} with at most 256 texts"))
+			return
+		}
+		vecs, err := s.App.Embedder.Embed(r.Context(), in.Texts)
+		if err != nil {
+			fail(w, 500, err)
+			return
+		}
+		writeJSON(w, embedpkg.EmbedResponse{Model: s.App.Embedder.Model(), Vectors: vecs})
 	})
 	return localOnly(mux)
 }

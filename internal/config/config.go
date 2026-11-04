@@ -15,6 +15,10 @@ import (
 
 // Config is the user-editable settings file (config.json in ConfigDir).
 type Config struct {
+	// Embedder selects the embedding provider: "auto" (default: Ollama when
+	// it answers and has EmbedModel, else the built-in model once
+	// downloaded), "builtin", "ollama", or "none" (keyword-only).
+	Embedder       string `json:"embedder"`
 	OllamaURL      string `json:"ollama_url"`
 	EmbedModel     string `json:"embed_model"`
 	EmbedDelayMS   int    `json:"embed_delay_ms"`
@@ -45,24 +49,31 @@ type Config struct {
 	// RecallMinSemanticFull applies instead when every query word occurs in
 	// the memory ("what indentation" scored 0.633 against the right memory).
 	RecallMinSemanticFull float64 `json:"recall_min_semantic_full"`
-	ListenAddr            string  `json:"listen_addr"`
+	// The built-in model scores on its own scale, so it has its own gates
+	// (measured: chit-chat max 0.659, true-match p10 0.672 over 2201 memories).
+	BuiltinMinSemantic     float64 `json:"builtin_min_semantic"`
+	BuiltinMinSemanticFull float64 `json:"builtin_min_semantic_full"`
+	ListenAddr             string  `json:"listen_addr"`
 }
 
 // Defaults returns the built-in configuration.
 func Defaults() Config {
 	return Config{
-		OllamaURL:             "http://127.0.0.1:11434",
-		EmbedModel:            "nomic-embed-text",
-		JcodeMemoryDir:        "",
-		MinScore:              6.0,
-		MaxResults:            5,
-		SemanticWeight:        10.0, // seid search: semantic_weight
-		SemanticFloor:         0.5,
-		SemanticSlots:         3,    // seid search: reserved semantic slots
-		RelativeFloor:         0.62, // e2e: weak neighbours land at 0.51-0.60 of the top hit
-		RecallMinSemantic:     0.64,
-		RecallMinSemanticFull: 0.58,
-		ListenAddr:            "127.0.0.1:7431",
+		Embedder:               "auto",
+		OllamaURL:              "http://127.0.0.1:11434",
+		EmbedModel:             "nomic-embed-text",
+		JcodeMemoryDir:         "",
+		MinScore:               6.0,
+		MaxResults:             5,
+		SemanticWeight:         10.0, // seid search: semantic_weight
+		SemanticFloor:          0.5,
+		SemanticSlots:          3,    // seid search: reserved semantic slots
+		RelativeFloor:          0.62, // e2e: weak neighbours land at 0.51-0.60 of the top hit
+		RecallMinSemantic:      0.64,
+		RecallMinSemanticFull:  0.58,
+		BuiltinMinSemantic:     0.665,
+		BuiltinMinSemanticFull: 0.62,
+		ListenAddr:             "127.0.0.1:7431",
 	}
 }
 

@@ -14,7 +14,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/veridit/muninn/internal/app"
+	"github.com/veridit/muninn/internal/config"
 	"github.com/veridit/muninn/internal/daemon"
+	"github.com/veridit/muninn/internal/embed"
 	"github.com/veridit/muninn/internal/harness"
 	"github.com/veridit/muninn/internal/mcpserver"
 	"github.com/veridit/muninn/internal/tui"
@@ -30,10 +32,14 @@ func serveCmd() *cobra.Command {
 		RunE: func(*cobra.Command, []string) error {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			// serve is the process that holds the built-in model for hooks;
+			// it must load it itself, never ask another serve.
+			os.Setenv("MUNINN_SERVE", "1")
 			return withApp(func(_ context.Context, a *app.App) error {
 				if addr == "" {
 					addr = a.Cfg.ListenAddr
 				}
+				fmt.Println("embedder:", a.EmbedNote)
 				mu := &sync.Mutex{}
 				if !noWatch {
 					go func() {
@@ -128,6 +134,18 @@ func installLike(install bool) *cobra.Command {
 				fmt.Print("[dry-run] ")
 			}
 			fmt.Println(r)
+		}
+		// One command should leave a working setup: fetch the built-in
+		// embedding model (pinned, verified) unless Ollama already serves one.
+		if install && !dry && !embed.Builtin.Present(config.DataDir()) {
+			cfg, _ := config.Load()
+			o := embed.NewOllama(cfg.OllamaURL, cfg.EmbedModel, 0)
+			if cfg.Embedder == "builtin" || (cfg.Embedder == "auto" && !o.Available(context.Background())) {
+				fmt.Fprintln(os.Stderr, "fetching the built-in embedding model (~127 MB, once; pinned and sha256-verified)")
+				if err := embed.Builtin.Download(context.Background(), config.DataDir(), nil); err != nil {
+					fmt.Fprintln(os.Stderr, "model download failed (muninn works keyword-only until `muninn model download` succeeds):", err)
+				}
+			}
 		}
 		return nil
 	}}
