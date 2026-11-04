@@ -38,6 +38,9 @@ type Hit struct {
 	Scope  string  `json:"scope"`
 	Score  float64 `json:"score"`
 	Why    string  `json:"why"`
+	// Updated is when the memory was last written. Recall shows it: a memory
+	// is a dated note of what was believed then, not documentation.
+	Updated time.Time `json:"updated"`
 }
 
 // Response is the recall result. Block is empty when nothing passed the bar.
@@ -119,7 +122,7 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 			continue
 		}
 		hits = append(hits, Hit{UnitID: res.Unit.ID, Key: res.Unit.Key, Source: e.sourceKind(res.Unit.SourceID), Text: res.Unit.Body, Kind: res.Unit.Kind,
-			Scope: res.Unit.Scope, Score: res.Total, Why: res.Explain()})
+			Scope: res.Unit.Scope, Score: res.Total, Why: res.Explain(), Updated: res.Unit.Updated})
 		if r.Session != "" {
 			e.record(r.Session, res.Unit.ID, res.Unit.ContentHash, r.Harness)
 		}
@@ -154,22 +157,31 @@ func (e *Engine) record(session string, unitID int64, hash, harness string) {
 		session, unitID, hash, harness, time.Now().UnixNano())
 }
 
-// Render formats hits as a labelled block, or "" when there are none. Each
-// memory carries its id so the agent can correct or retire it, and the
-// header states how: a recalled memory that turns out wrong must not be
-// silently ignored, or it will be recalled again next time.
+// Render formats hits as a labelled block, or "" when there are none.
+//
+// Memories are presented as what they are: dated notes of what was believed
+// at the time, not documentation. Each carries its date (so the agent sees
+// which is newer and how a belief developed) and its id (so a wrong one can
+// be corrected instead of recalled again next time).
 func Render(hits []Hit) string {
 	if len(hits) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s Local memories that may be relevant to this message (from muninn, not typed by the user). Use them only if they apply.\n", Marker)
+	fmt.Fprintf(&b, "%s Dated memories that may be relevant (from muninn, not typed by the user). Each was true when written, not necessarily now: prefer newer over older, and check before relying on one.\n", Marker)
 	for _, h := range hits {
 		text := strings.Join(strings.Fields(h.Text), " ")
-		fmt.Fprintf(&b, "- [%s] %s\n", ref(h), Truncate(text, 1200))
+		fmt.Fprintf(&b, "- [%s%s] %s\n", date(h.Updated), ref(h), Truncate(text, 1200))
 	}
 	b.WriteString("If one of these is wrong or outdated, fix it now: muninn memories (mem_/imp_) with `muninn forget <id>` (or MCP memory_forget) plus `muninn remember` for the corrected fact; jcode memories with jcode's memory tool.")
 	return b.String()
+}
+
+func date(t time.Time) string {
+	if t.IsZero() || t.Year() < 2000 {
+		return ""
+	}
+	return t.Format("2006-01-02") + " "
 }
 
 func ref(h Hit) string {

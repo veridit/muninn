@@ -3,6 +3,7 @@ package recall
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSaveCue(t *testing.T) {
@@ -39,8 +40,8 @@ func TestSaveCue(t *testing.T) {
 }
 
 func TestRenderCarriesIDsAndFixRule(t *testing.T) {
-	b := Render([]Hit{{Key: "mem_1a2b", Source: "native", Text: "Uses tabs"}, {Key: "abc-123", Source: "jcode", Text: "Port 8443"}})
-	for _, want := range []string{"- [mem_1a2b] Uses tabs", "- [jcode:abc-123] Port 8443", "muninn forget <id>"} {
+	b := Render([]Hit{{Key: "mem_1a2b", Source: "native", Text: "Uses tabs", Updated: time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)}, {Key: "abc-123", Source: "jcode", Text: "Port 8443"}})
+	for _, want := range []string{"- [2026-03-01 mem_1a2b] Uses tabs", "- [jcode:abc-123] Port 8443", "muninn forget <id>", "prefer newer over older"} {
 		if !contains(b, want) {
 			t.Errorf("block missing %q:\n%s", want, b)
 		}
