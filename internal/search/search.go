@@ -232,9 +232,40 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 		}
 	}
 
-	// Load candidate units and apply filters.
-	results := make([]Result, 0, len(scores))
+	// Score candidates without touching rows, keep the best few (by total and
+	// by semantic, for the reserved slots), and only then load those units.
+	// Loading every candidate one query at a time dominated search time.
+	type cand struct {
+		id    int64
+		a     *acc
+		total float64
+	}
+	cands := make([]cand, 0, len(scores))
 	for id, a := range scores {
+		t := float64(a.kw) + math.Log(1+float64(a.comm)) + sem[id]*o.SemanticWeight
+		if t > 0.001 && t >= o.MinScore {
+			cands = append(cands, cand{id, a, t})
+		}
+	}
+	keep := map[int64]bool{}
+	pool := 4*o.Limit + 4*o.SemanticSlots + 16 // headroom for scope/kind/inactive filtering
+	sort.Slice(cands, func(i, j int) bool { return cands[i].total > cands[j].total })
+	for i := 0; i < len(cands) && i < pool; i++ {
+		keep[cands[i].id] = true
+	}
+	bySem := append([]cand(nil), cands...)
+	sort.Slice(bySem, func(i, j int) bool { return sem[bySem[i].id] > sem[bySem[j].id] })
+	for i := 0; i < len(bySem) && i < pool; i++ {
+		keep[bySem[i].id] = true
+	}
+
+	// Load the kept units and apply filters.
+	results := make([]Result, 0, len(keep))
+	for _, c := range cands {
+		if !keep[c.id] {
+			continue
+		}
+		id, a := c.id, c.a
 		u, err := s.DB.GetUnit(id)
 		if err == sql.ErrNoRows {
 			continue
@@ -245,11 +276,7 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 		if !u.Active || !allowed(u.Scope, o.Scopes) || !allowed(u.Kind, o.Kinds) {
 			continue
 		}
-		r := Result{Unit: u, Keyword: a.kw, Community: a.comm, Semantic: sem[id]}
-		r.Total = float64(a.kw) + math.Log(1+float64(a.comm)) + r.Semantic*o.SemanticWeight
-		if r.Total > 0.001 {
-			results = append(results, r)
-		}
+		results = append(results, Result{Unit: u, Keyword: a.kw, Community: a.comm, Semantic: sem[id], Total: c.total})
 	}
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].Total != results[j].Total {

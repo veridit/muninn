@@ -96,8 +96,27 @@ type Options struct {
 	NotesRoots []string
 }
 
-// Run performs one incremental pass over every configured source.
+// Run performs one incremental pass over every configured source. The whole
+// pass runs in one transaction: per-statement fsyncs dominated cold indexing
+// (profiled at 92% in syscalls), and a pass is all-or-nothing anyway.
+// store.Open caps the pool at one connection, so BEGIN/COMMIT on the pool
+// bracket every statement of the pass.
 func (ix *Indexer) Run(ctx context.Context, o Options) (Stats, error) {
+	if _, err := ix.DB.Exec(`BEGIN IMMEDIATE`); err != nil {
+		return Stats{}, err
+	}
+	st, err := ix.run(ctx, o)
+	if err != nil {
+		ix.DB.Exec(`ROLLBACK`)
+		return st, err
+	}
+	if _, err := ix.DB.Exec(`COMMIT`); err != nil {
+		return st, err
+	}
+	return st, nil
+}
+
+func (ix *Indexer) run(ctx context.Context, o Options) (Stats, error) {
 	t0 := time.Now()
 	var st Stats
 	ix.deltas = nil
@@ -311,12 +330,21 @@ func (ix *Indexer) UpdateNeighbors(dirty, removed []int64) error {
 		if _, err := ix.DB.Exec(`DELETE FROM neighbors WHERE unit_id=?`, id); err != nil {
 			return err
 		}
-		for _, b := range best {
-			if _, err := ix.DB.Exec(`INSERT INTO neighbors(unit_id, nbr_id, sim) VALUES(?,?,?)`, id, b.id, b.sim); err != nil {
-				return err
-			}
+		if len(best) == 0 {
+			return nil
 		}
-		return nil
+		var sb strings.Builder
+		args := make([]any, 0, 3*len(best))
+		sb.WriteString(`INSERT INTO neighbors(unit_id, nbr_id, sim) VALUES `)
+		for i, b := range best {
+			if i > 0 {
+				sb.WriteByte(',')
+			}
+			sb.WriteString("(?,?,?)")
+			args = append(args, id, b.id, b.sim)
+		}
+		_, err := ix.DB.Exec(sb.String(), args...)
+		return err
 	}
 	dirtySet := map[int64]bool{}
 	for _, d := range dirty {
