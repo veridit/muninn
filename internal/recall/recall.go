@@ -31,6 +31,8 @@ type Request struct {
 // Hit is one recalled memory.
 type Hit struct {
 	UnitID int64   `json:"id"`
+	Key    string  `json:"key"`    // id within its source: mem_/imp_ for muninn, the jcode memory id, ...
+	Source string  `json:"source"` // native | jcode | markdown
 	Text   string  `json:"text"`
 	Kind   string  `json:"kind"`
 	Scope  string  `json:"scope"`
@@ -116,7 +118,7 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 		if r.Session != "" && e.injected(r.Session, res.Unit.ContentHash) {
 			continue
 		}
-		hits = append(hits, Hit{UnitID: res.Unit.ID, Text: res.Unit.Body, Kind: res.Unit.Kind,
+		hits = append(hits, Hit{UnitID: res.Unit.ID, Key: res.Unit.Key, Source: e.sourceKind(res.Unit.SourceID), Text: res.Unit.Body, Kind: res.Unit.Kind,
 			Scope: res.Unit.Scope, Score: res.Total, Why: res.Explain()})
 		if r.Session != "" {
 			e.record(r.Session, res.Unit.ID, res.Unit.ContentHash, r.Harness)
@@ -124,7 +126,22 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 	}
 	resp := Response{Hits: hits, Elapsed: time.Since(t0).Round(time.Millisecond).String()}
 	resp.Block = Render(hits)
+	if resp.Block == "" {
+		// Nothing relevant to recall, but the message may itself be worth
+		// keeping: say so once, briefly.
+		if cue := SaveCue(msg); cue != "" {
+			resp.Block = Marker + " " + cue
+		}
+	} else if cue := SaveCue(msg); cue != "" {
+		resp.Block += "\n" + cue
+	}
 	return resp, nil
+}
+
+func (e *Engine) sourceKind(id int64) string {
+	var k string
+	e.DB.QueryRow(`SELECT kind FROM sources WHERE id=?`, id).Scan(&k)
+	return k
 }
 
 func (e *Engine) injected(session, hash string) bool {
@@ -137,7 +154,10 @@ func (e *Engine) record(session string, unitID int64, hash, harness string) {
 		session, unitID, hash, harness, time.Now().UnixNano())
 }
 
-// Render formats hits as a labelled block, or "" when there are none.
+// Render formats hits as a labelled block, or "" when there are none. Each
+// memory carries its id so the agent can correct or retire it, and the
+// header states how: a recalled memory that turns out wrong must not be
+// silently ignored, or it will be recalled again next time.
 func Render(hits []Hit) string {
 	if len(hits) == 0 {
 		return ""
@@ -146,7 +166,20 @@ func Render(hits []Hit) string {
 	fmt.Fprintf(&b, "%s Local memories that may be relevant to this message (from muninn, not typed by the user). Use them only if they apply.\n", Marker)
 	for _, h := range hits {
 		text := strings.Join(strings.Fields(h.Text), " ")
-		fmt.Fprintf(&b, "- %s\n", Truncate(text, 1200))
+		fmt.Fprintf(&b, "- [%s] %s\n", ref(h), Truncate(text, 1200))
 	}
-	return strings.TrimRight(b.String(), "\n")
+	b.WriteString("If one of these is wrong or outdated, fix it now: muninn memories (mem_/imp_) with `muninn forget <id>` (or MCP memory_forget) plus `muninn remember` for the corrected fact; jcode memories with jcode's memory tool.")
+	return b.String()
+}
+
+func ref(h Hit) string {
+	switch h.Source {
+	case "native":
+		return h.Key
+	case "jcode":
+		return "jcode:" + h.Key
+	case "":
+		return fmt.Sprintf("#%d", h.UnitID)
+	}
+	return h.Source + ":" + h.Key
 }
