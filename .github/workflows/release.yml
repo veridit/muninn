@@ -25,3 +25,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes --title "${GITHUB_REF_NAME}"
+      - name: Update Homebrew formula and Scoop manifest
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh && printf '%s\n' "$TAP_DEPLOY_KEY" > ~/.ssh/tap && chmod 600 ~/.ssh/tap
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/tap -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          git clone git@github.com:veridit/homebrew-tap.git tap
+          ./scripts/package-managers.sh "${GITHUB_REF_NAME}" dist/SHA256SUMS tap
+          cd tap
+          git config user.name "muninn release"
+          git config user.email "muninn-release@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || git commit -m "muninn ${GITHUB_REF_NAME}"
+          git push origin HEAD
+          rm -f ~/.ssh/tap

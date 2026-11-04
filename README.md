@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.svg" width="128" alt="muninn logo: a raven"></p>
+
 # muninn
 
 **Local-first memory recall for AI coding agents.** muninn indexes your memories
@@ -79,13 +81,25 @@ model load (measured 420-650 ms). muninn asks Ollama to keep the ~300 MB
 
 ## Install
 
-Download a release archive for your platform, or build from source:
+| Platform | Install | Update |
+|---|---|---|
+| macOS, Linux (Homebrew) | `brew install veridit/tap/muninn` | `brew upgrade muninn` |
+| Windows (Scoop) | `scoop bucket add veridit https://github.com/veridit/homebrew-tap`<br>`scoop install muninn` | `scoop update muninn` |
+| macOS, Linux (no package manager) | `curl -fsSL https://raw.githubusercontent.com/veridit/muninn/main/install.sh \| sh` | run it again |
+| Go | `go install github.com/veridit/muninn/cmd/muninn@latest` | run it again |
+
+Then wire it into your agents and, optionally, keep it running in the background:
 
 ```sh
-go install github.com/veridit/muninn/cmd/muninn@latest
+muninn install all            # Claude Code, Codex and jcode; keeps backups, idempotent
+brew services start muninn    # Homebrew: watcher + web UI on http://127.0.0.1:7431
 ```
 
-Semantic search needs a local [Ollama](https://ollama.com) with an embedding model:
+Every release publishes the formula and manifest automatically, pinned to the
+release's SHA-256 sums; `install.sh` verifies the archive the same way.
+
+Semantic search uses a local [Ollama](https://ollama.com) embedding model when
+one is running:
 
 ```sh
 ollama pull nomic-embed-text

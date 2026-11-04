@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="t">
+  <title id="t">muninn: Odin's raven of memory</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f3ead8"/>
+      <stop offset="1" stop-color="#e6d6b8"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <!-- ring of memories -->
+  <circle cx="128" cy="128" r="96" fill="none" stroke="#b8862e" stroke-width="3.5" stroke-dasharray="1 15" stroke-linecap="round"/>
+  <!-- raven in profile, facing left: heavy beak, shaggy throat, long wedge tail -->
+  <path fill="#14161c" d="
+    M44 104
+    L78 92
+    C86 80 100 72 116 72
+    C134 72 148 82 154 98
+    C170 106 186 120 196 138
+    L232 170
+    L222 176
+    L228 190
+    L212 184
+    L206 196
+    L190 170
+    C174 172 156 168 142 160
+    L132 170
+    L122 164
+    L126 154
+    C110 146 98 132 94 118
+    L84 122
+    L88 114
+    L80 116
+    L84 108
+    Z"/>
+  <!-- wing edge highlight -->
+  <path fill="none" stroke="#3a3f4c" stroke-width="4" stroke-linecap="round" d="M120 112 C146 116 174 132 192 160"/>
+  <!-- beak gape line -->
+  <path fill="none" stroke="#3a3f4c" stroke-width="2.5" stroke-linecap="round" d="M50 103 L84 99"/>
+  <!-- eye: the remembered spark -->
+  <circle cx="104" cy="90" r="6" fill="#d9a441"/>
+  <circle cx="104" cy="90" r="2.2" fill="#14161c"/>
+  <!-- feet on a branch-less perch line -->
+  <path fill="none" stroke="#14161c" stroke-width="5" stroke-linecap="round" d="M140 164 L136 190 M152 166 L152 192 M122 192 L170 192"/>
+</svg>
