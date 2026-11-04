@@ -47,7 +47,8 @@ func Open(ctx context.Context) (*App, error) {
 	}
 	a.Indexer = &index.Indexer{DB: db, Embedder: a.Embedder}
 	a.Searcher = &search.Searcher{DB: db, Embedder: a.Embedder}
-	a.Recall = &recall.Engine{DB: db, Searcher: a.Searcher, Options: a.RecallOptions(), RelativeFloor: cfg.RelativeFloor}
+	a.Recall = &recall.Engine{DB: db, Searcher: a.Searcher, Options: a.RecallOptions(),
+		RelativeFloor: cfg.RelativeFloor, MinSemantic: cfg.RecallMinSemantic}
 	return a, nil
 }
 

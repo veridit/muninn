@@ -21,15 +21,31 @@ type Memory struct {
 
 // jcodeFile is the subset of a jcode memory graph file muninn reads.
 // Observed on disk: {"graph_version":…, "memories": {id: {...}}, ...}.
+// category is usually a string but can be {"custom": "..."}.
 type jcodeFile struct {
 	Memories map[string]struct {
-		ID        string   `json:"id"`
-		Content   string   `json:"content"`
-		Category  string   `json:"category"`
-		Tags      []string `json:"tags"`
-		Active    *bool    `json:"active"`
-		UpdatedAt string   `json:"updated_at"`
+		ID        string          `json:"id"`
+		Content   string          `json:"content"`
+		Category  json.RawMessage `json:"category"`
+		Tags      []string        `json:"tags"`
+		Active    *bool           `json:"active"`
+		UpdatedAt string          `json:"updated_at"`
 	} `json:"memories"`
+}
+
+// jcodeCategory decodes a category that is either "fact" or {"custom":"..."}.
+func jcodeCategory(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var c struct {
+		Custom string `json:"custom"`
+	}
+	if json.Unmarshal(raw, &c) == nil && c.Custom != "" {
+		return "custom"
+	}
+	return ""
 }
 
 // ReadJcodeFile parses one jcode memory graph JSON file (read-only).
@@ -53,7 +69,7 @@ func ReadJcodeFile(path string) ([]Memory, error) {
 		}
 		t, _ := time.Parse(time.RFC3339Nano, m.UpdatedAt)
 		out = append(out, Memory{
-			Key: key, Content: m.Content, Category: m.Category, Tags: m.Tags,
+			Key: key, Content: m.Content, Category: jcodeCategory(m.Category), Tags: m.Tags,
 			Active: m.Active == nil || *m.Active, Updated: t,
 		})
 	}

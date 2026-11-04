@@ -53,6 +53,9 @@ type Engine struct {
 	Options  search.Options
 	// RelativeFloor drops hits below this fraction of the best hit (0 = off).
 	RelativeFloor float64
+	// MinSemantic is the cosine a hit needs for automatic injection when an
+	// embedder is available (0 = off).
+	MinSemantic float64
 }
 
 // IsOwnOutput reports whether text is (or quotes) a muninn injection.
@@ -89,6 +92,17 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 	results, err := e.Searcher.Search(ctx, Truncate(msg, MaxQueryBytes), o)
 	if err != nil {
 		return Response{}, err
+	}
+	// Semantic gate first (when embeddings exist), then the relative floor
+	// against the best surviving hit.
+	if e.MinSemantic > 0 && e.Searcher.Embedder != nil {
+		kept := results[:0]
+		for _, r := range results {
+			if r.Semantic >= e.MinSemantic {
+				kept = append(kept, r)
+			}
+		}
+		results = kept
 	}
 	var hits []Hit
 	for i, res := range results {

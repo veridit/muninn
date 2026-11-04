@@ -29,23 +29,29 @@ type Config struct {
 	// RelativeFloor drops recall hits scoring below this fraction of the top
 	// hit, so one strong match does not drag weak neighbours along.
 	RelativeFloor float64 `json:"relative_floor"`
-	ListenAddr    string  `json:"listen_addr"`
+	// RecallMinSemantic is the cosine a memory must reach to be injected
+	// automatically. Measured on real memories with nomic-embed-text:
+	// unrelated text lands at 0.52-0.62, true matches at 0.66-0.77.
+	// Ignored when no embedder is available (keyword-only fallback).
+	RecallMinSemantic float64 `json:"recall_min_semantic"`
+	ListenAddr        string  `json:"listen_addr"`
 }
 
 // Defaults returns the built-in configuration.
 func Defaults() Config {
 	home, _ := os.UserHomeDir()
 	return Config{
-		OllamaURL:      "http://127.0.0.1:11434",
-		EmbedModel:     "nomic-embed-text",
-		JcodeMemoryDir: filepath.Join(home, ".jcode", "memory"),
-		MinScore:       6.0,
-		MaxResults:     5,
-		SemanticWeight: 10.0, // seid search: semantic_weight
-		SemanticFloor:  0.5,
-		SemanticSlots:  3,    // seid search: reserved semantic slots
-		RelativeFloor:  0.62, // e2e: weak neighbours land at 0.51-0.60 of the top hit
-		ListenAddr:     "127.0.0.1:7431",
+		OllamaURL:         "http://127.0.0.1:11434",
+		EmbedModel:        "nomic-embed-text",
+		JcodeMemoryDir:    filepath.Join(home, ".jcode", "memory"),
+		MinScore:          6.0,
+		MaxResults:        5,
+		SemanticWeight:    10.0, // seid search: semantic_weight
+		SemanticFloor:     0.5,
+		SemanticSlots:     3,    // seid search: reserved semantic slots
+		RelativeFloor:     0.62, // e2e: weak neighbours land at 0.51-0.60 of the top hit
+		RecallMinSemantic: 0.64,
+		ListenAddr:        "127.0.0.1:7431",
 	}
 }
 
