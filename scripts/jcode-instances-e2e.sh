@@ -60,7 +60,7 @@ for inst in alpha beta; do
   got=$(cat "$h/injected")
   other=$([ $inst = alpha ] && echo Beta || echo Alpha)
   # Require a short Crockford id, with an optional date.
-  if grep -q "^$h$" <<<"$got" && grep -qiE "^- \[([0-9]{4}-[0-9]{2}-[0-9]{2} )?[0123456789abcdefghjkmnpqrstvwxyz]{6,}\] ${inst} deploys" <<<"$got" && ! grep -q "$other deploys" <<<"$got"; then
+  if grep -q "^$h$" <<<"$got" && grep -qiE "^\.0:([0-9]{4}-[0-9]{2}-[0-9]{2})? \.1:[0123456789abcdefghjkmnpqrstvwxyz]{6,} \.2:\`${inst} deploys" <<<"$got" && ! grep -q "$other deploys" <<<"$got"; then
     echo "$inst: injected own memory only: ok"
   else
     echo "$inst: FAIL"; echo "$got"; fail=1

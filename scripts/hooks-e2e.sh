@@ -12,7 +12,7 @@ payload='{"session_id":"s-123","prompt":"banana mode please","cwd":"/tmp","hook_
 echo "== claude hook, first prompt";  echo "$payload" | ./bin/muninn hook claude
 echo "== claude hook, same session again (dedupe -> no output)"; echo "$payload" | ./bin/muninn hook claude; echo "[end]"
 echo "== codex hook, own-output loop guard (no output)"
-echo '{"session_id":"s-9","prompt":"[muninn recall] - banana mode","hook_event_name":"UserPromptSubmit"}' | ./bin/muninn hook codex; echo "[end]"
+echo '{"session_id":"s-9","prompt":"-- muninn recall: banana mode","hook_event_name":"UserPromptSubmit"}' | ./bin/muninn hook codex; echo "[end]"
 echo "== web API"
 ./bin/muninn serve --addr 127.0.0.1:17431 --no-watch > "$MUNINN_HOME/serve-e2e.log" 2>&1 &
 pid=$!

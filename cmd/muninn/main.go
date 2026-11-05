@@ -46,6 +46,7 @@ func main() {
 	root := &cobra.Command{
 		Use:           "muninn",
 		Short:         "Local-first memory recall for AI coding agents",
+		Example:       "  muninn search \"banana mode\"\n  muninn forget k7m2qx\n  muninn remember \"The corrected fact\"",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

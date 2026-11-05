@@ -130,7 +130,9 @@ Every indexed memory has a short lowercase Crockford base32 id, usually six
 characters, for example `k7m2qx`. Recall entries look like:
 
 ```text
-- [2026-11-02 k7m2qx] The project uses 4-space indentation.
+-- muninn recall: notes from memory, not the user; newer wins; verify. To manage: muninn MCP (memory_* tools) or 'muninn help'
+:.Memory .date@0:Day .id@1:Unique .note@2:Markdown
+.0:2026-11-02 .1:k7m2qx .2:`The project uses 4-space indentation.`
 ```
 
 Ids are deterministic from the stable upstream identity, not the text. A hash

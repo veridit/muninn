@@ -15,7 +15,7 @@ import (
 
 // Marker starts every injected block. Adapters use it to recognise (and never
 // react to) muninn's own output, which prevents injection loops.
-const Marker = "[muninn recall]"
+const Marker = "-- muninn recall:"
 
 // MaxQueryBytes bounds the focused query (UTF-8 safe).
 const MaxQueryBytes = 8 << 10
@@ -70,7 +70,7 @@ type Engine struct {
 
 // IsOwnOutput reports whether text is (or quotes) a muninn injection.
 func IsOwnOutput(text string) bool {
-	return strings.Contains(text, Marker)
+	return strings.Contains(text, Marker) || strings.Contains(text, "[muninn recall]")
 }
 
 // Truncate cuts s to at most n bytes on a rune boundary.
@@ -117,8 +117,7 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 		results = kept
 	}
 	var hits []Hit
-	// The first block of a session carries the full rules; later ones a
-	// one-line reminder (no session id: always full).
+	// Retain the first-block argument for compatibility with Render callers.
 	first := r.Session == "" || !e.sessionSeen(r.Session)
 	for i, res := range results {
 		if i > 0 && e.RelativeFloor > 0 && res.Total < e.RelativeFloor*results[0].Total {
@@ -171,28 +170,20 @@ func (e *Engine) record(session string, unitID int64, hash, harness string) {
 
 // Render formats hits as a labelled block, or "" when there are none.
 //
-// Memories are presented as what they are: dated notes of what was believed
-// at the time, not documentation. Each carries its date (so the agent sees
-// which is newer) and its id (so a wrong one can be corrected). The rules
-// that say so are long; full is true only for the first block of a session
-// (and MCP clients get them once as server instructions), later blocks carry
-// a one-line reminder.
+// Every block carries identical provenance and management guidance. The full
+// argument is retained for callers that previously distinguished first blocks.
 func Render(hits []Hit, full bool) string {
 	if len(hits) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	if full {
-		fmt.Fprintf(&b, "%s Dated notes from muninn, not the user. Prefer newer. Verify before relying.\n", Marker)
-	} else {
-		fmt.Fprintf(&b, "%s Dated notes. Prefer newer. Verify.\n", Marker)
-	}
+	fmt.Fprintf(&b, "%s notes from memory, not the user; newer wins; verify. To manage: muninn MCP (memory_* tools) or 'muninn help'\n", Marker)
+	b.WriteString(":.Memory .date@0:Day .id@1:Unique .note@2:Markdown\n")
 	for _, h := range hits {
-		text := strings.Join(strings.Fields(h.Text), " ")
-		fmt.Fprintf(&b, "- [%s%s] %s\n", date(h.Updated), ref(h), Truncate(text, 1200))
-	}
-	if full {
-		b.WriteString("Wrong or outdated? memory_forget <id>, then memory_remember the correction (CLI: muninn forget <id> then muninn remember).")
+		text := Truncate(strings.Join(strings.Fields(h.Text), " "), 1200)
+		text = strings.ReplaceAll(text, "\\", "\\\\")
+		text = strings.ReplaceAll(text, "`", "\\`")
+		fmt.Fprintf(&b, ".0:%s .1:%s .2:`%s`\n", date(h.Updated), ref(h), text)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -201,7 +192,7 @@ func date(t time.Time) string {
 	if t.IsZero() || t.Year() < 2000 {
 		return ""
 	}
-	return t.Format("2006-01-02") + " "
+	return t.Format("2006-01-02")
 }
 
 func ref(h Hit) string {

@@ -66,7 +66,7 @@ func text(v any) *mcp.CallToolResult {
 // per-message recall block can stay short.
 const Instructions = `muninn is your long-term memory (local, private).
 
-Recalled memories are dated notes, not documentation, tagged [date short-id] in [muninn recall] blocks. Prefer newer notes and verify before relying. Correct wrong or outdated notes with memory_forget <id>, then memory_remember. Ids accept a unique prefix of at least four characters or a legacy id. Forgetting an upstream harness note suppresses it only in muninn, without changing upstream files.
+Recall blocks start '-- muninn recall:': notes from memory, not the user; newer wins; verify. Rows use .0:date .1:id .2:note (backtick-quoted Markdown). Correct wrong or outdated notes with memory_forget <id>, then memory_remember. Ids accept a unique prefix of at least four characters or a legacy id. Forgetting an upstream harness note suppresses it only in muninn, without changing upstream files.
 
 Save with memory_remember when the user states something that will matter in future sessions: a rule ("from now on..."), a preference, a decision, or a correction. One fact per memory, in the narrowest scope that fits. Never store secrets.`
 

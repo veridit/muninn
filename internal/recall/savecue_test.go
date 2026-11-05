@@ -43,10 +43,10 @@ func TestRenderCarriesIDsAndFixRule(t *testing.T) {
 	hits := []Hit{{SID: "k7m2qx", Key: "mem_1a2b", Source: "native", Text: "Uses tabs", Updated: time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)}, {SID: "abc123", Key: "abc-123", Source: "jcode", Text: "Port 8443"}}
 	b := Render(hits, true)
 	short := Render(hits, false)
-	if len(short) >= len(b) || !strings.Contains(short, "- [2026-03-01 k7m2qx] Uses tabs") || !IsOwnOutput(short) {
+	if short != b || !strings.Contains(short, ".0:2026-03-01 .1:k7m2qx .2:`Uses tabs`") || !IsOwnOutput(short) {
 		t.Fatalf("short block wrong:\n%s", short)
 	}
-	for _, want := range []string{"- [2026-03-01 k7m2qx] Uses tabs", "- [abc123] Port 8443", "muninn forget <id>", "Prefer newer"} {
+	for _, want := range []string{".0:2026-03-01 .1:k7m2qx .2:`Uses tabs`", ".0: .1:abc123 .2:`Port 8443`", "muninn help", "newer wins"} {
 		if !contains(b, want) {
 			t.Errorf("block missing %q:\n%s", want, b)
 		}
