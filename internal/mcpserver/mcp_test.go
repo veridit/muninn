@@ -149,18 +149,18 @@ func TestMCPScopedToInstance(t *testing.T) {
 	if betaUnit == 0 {
 		t.Fatal("setup: beta unit not indexed")
 	}
-	out, _ = call(t, cs, "memory_related", map[string]any{"unit_id": betaUnit})
-	if s := scopesOf(t, out); len(s) != 0 {
-		t.Fatalf("related leaked through beta id: %v", s)
+	out, isErr = call(t, cs, "memory_related", map[string]any{"unit_id": betaUnit})
+	if !isErr || out != "no visible memory" {
+		t.Fatalf("related leaked: %q error=%v", out, isErr)
 	}
 	beta, err := a.DB.GetUnit(betaUnit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, ref := range []string{beta.SID, beta.SID[:4], beta.Key} {
-		out, _ = call(t, cs, "memory_related", map[string]any{"id": ref})
-		if s := scopesOf(t, out); len(s) != 0 {
-			t.Fatalf("related leaked through %q: %v", ref, s)
+		out, isErr = call(t, cs, "memory_related", map[string]any{"id": ref})
+		if !isErr || out != "no visible memory" {
+			t.Fatalf("related leaked: %q error=%v", out, isErr)
 		}
 		if out, isErr := call(t, cs, "memory_forget", map[string]any{"id": ref}); !isErr {
 			t.Fatalf("alpha forgot beta via %q: %s", ref, out)
@@ -170,7 +170,7 @@ func TestMCPScopedToInstance(t *testing.T) {
 
 func TestMCPForgetsByShortPrefix(t *testing.T) {
 	a, ids := testApp(t)
-	cs := connect(t, a, Options{})
+	cs := connect(t, a, Options{Scopes: []string{"jcode@alpha", "global"}, DefaultScope: "jcode@alpha"})
 	u, err := a.DB.Resolve(ids["jcode@alpha"])
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,8 @@ func TestMCPForgetsByShortPrefix(t *testing.T) {
 	}
 }
 
-func TestMCPUnrestrictedWithoutInstance(t *testing.T) {
+func TestMCPGlobalWithoutInstance(t *testing.T) {
+	t.Setenv("JCODE_HOME", "")
 	a, _ := testApp(t)
 	cs := connect(t, a, Options{})
 	out, _ := call(t, cs, "memory_search", map[string]any{"query": "deploy password rotation", "limit": 10})
@@ -192,8 +193,8 @@ func TestMCPUnrestrictedWithoutInstance(t *testing.T) {
 	for _, s := range scopesOf(t, out) {
 		seen[s] = true
 	}
-	if !seen["jcode@alpha"] || !seen["jcode@beta"] {
-		t.Fatalf("unrestricted session should see both instances, saw %v", seen)
+	if seen["jcode@alpha"] || seen["jcode@beta"] || !seen["global"] {
+		t.Fatalf("global session leaked client or lost global: %v", seen)
 	}
 }
 

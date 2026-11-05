@@ -9,13 +9,13 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/veridit/muninn/internal/app"
 	embedpkg "github.com/veridit/muninn/internal/embed"
-	"github.com/veridit/muninn/internal/ingest"
 	"github.com/veridit/muninn/internal/recall"
 	"github.com/veridit/muninn/internal/search"
 )
@@ -26,8 +26,9 @@ var static embed.FS
 // Server is the HTTP front end. Mu serialises writers (index, remember,
 // forget) so the single SQLite writer is never contended.
 type Server struct {
-	App *app.App
-	Mu  *sync.Mutex
+	App     *app.App
+	Mu      *sync.Mutex
+	Binding app.Binding
 }
 
 type apiHit struct {
@@ -69,13 +70,18 @@ func fail(w http.ResponseWriter, code int, err error) { http.Error(w, err.Error(
 
 // Handler returns the routes.
 func (s *Server) Handler() http.Handler {
+	b := s.Binding
+	if b.Name == "" {
+		cwd, _ := os.Getwd()
+		b = s.App.Bound("", cwd)
+	}
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))
 
 	mux.HandleFunc("GET /api/search", func(w http.ResponseWriter, r *http.Request) {
 		o := s.App.RecallOptions()
-		o.MinScore, o.Limit = 0, 20
+		o.MinScore, o.Limit, o.Scopes = 0, 20, b.Scopes
 		res, err := s.App.Searcher.Search(r.Context(), r.URL.Query().Get("q"), o)
 		if err != nil {
 			fail(w, 500, err)
@@ -84,12 +90,12 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, map[string]any{"results": s.hits(res, r.URL.Query().Get("explain") == "1")})
 	})
 	mux.HandleFunc("GET /api/related", func(w http.ResponseWriter, r *http.Request) {
-		u, err := s.App.DB.Resolve(r.URL.Query().Get("id"))
+		u, err := b.Resolve(s.App, r.URL.Query().Get("id"))
 		if err != nil {
 			fail(w, 404, err)
 			return
 		}
-		res, err := s.App.Searcher.Related(r.Context(), u.ID, 10)
+		res, err := s.App.Searcher.RelatedIn(r.Context(), u.ID, 10, b.Scopes)
 		if err != nil {
 			fail(w, 500, err)
 			return
@@ -104,7 +110,7 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 400, err)
 			return
 		}
-		resp, err := s.App.Recall.Recall(r.Context(), recall.Request{Message: in.Message, Session: in.Session, Harness: in.Harness})
+		resp, err := s.App.Recall.Recall(r.Context(), recall.Request{Message: in.Message, Session: in.Session, Harness: in.Harness, Scopes: b.Scopes})
 		if err != nil {
 			fail(w, 500, err)
 			return
@@ -122,18 +128,9 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.Mu.Lock()
 		defer s.Mu.Unlock()
-		m, re, err := ingest.Remember(app.NativePath(), in.Content, in.Category, in.Scope, in.Tags)
+		u, re, err := b.Remember(r.Context(), s.App, in.Content, in.Category, in.Scope, in.Tags)
 		if err != nil {
 			fail(w, 400, err)
-			return
-		}
-		if _, err := s.App.Reindex(r.Context()); err != nil {
-			fail(w, 500, err)
-			return
-		}
-		u, err := s.App.DB.Resolve(m.ID)
-		if err != nil {
-			fail(w, 500, err)
 			return
 		}
 		writeJSON(w, map[string]any{"id": u.SID, "reinforced": re})
@@ -146,7 +143,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.Mu.Lock()
 		defer s.Mu.Unlock()
-		out, err := s.App.Forget(r.Context(), in.ID)
+		out, err := b.Forget(r.Context(), s.App, in.ID)
 		if err != nil {
 			fail(w, 404, err)
 			return
@@ -154,8 +151,11 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, out)
 	})
 	mux.HandleFunc("GET /api/injections", func(w http.ResponseWriter, r *http.Request) {
-		rows, err := s.App.DB.QueryContext(r.Context(), `SELECT i.session, i.harness, i.at_ns, COALESCE(u.body,'') FROM injections i
-		  LEFT JOIN units u ON u.id = i.unit_id ORDER BY i.at_ns DESC LIMIT 100`)
+		where, args := search.ScopeSQL("u.scope", b.Scopes)
+		rows, err := s.App.DB.QueryContext(r.Context(), `SELECT i.session, i.harness, i.at_ns, u.body FROM injections i
+		  JOIN units mirror ON mirror.id=i.unit_id JOIN units u ON u.sid=mirror.sid
+		  WHERE u.id=(SELECT c.id FROM units c JOIN sources cs ON cs.id=c.source_id WHERE c.sid=u.sid ORDER BY (cs.kind='native') DESC,c.updated_ns DESC,c.id LIMIT 1)
+		  AND (`+where+`) ORDER BY i.at_ns DESC LIMIT 100`, args...)
 		if err != nil {
 			fail(w, 500, err)
 			return
@@ -173,7 +173,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, map[string]any{"rows": lower(out)})
 	})
 	mux.HandleFunc("GET /api/stats", func(w http.ResponseWriter, r *http.Request) {
-		st, err := app.Stats(r.Context(), s.App)
+		st, err := app.Stats(r.Context(), s.App, b)
 		if err != nil {
 			fail(w, 500, err)
 			return

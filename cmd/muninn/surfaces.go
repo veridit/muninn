@@ -28,6 +28,7 @@ func ioReadAll(r io.Reader) ([]byte, error) { return io.ReadAll(io.LimitReader(r
 func serveCmd() *cobra.Command {
 	var addr string
 	var noWatch bool
+	var view viewFlags
 	c := &cobra.Command{Use: "serve", Short: "Run the watcher (incremental reindex on change) and the local web UI",
 		RunE: func(*cobra.Command, []string) error {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -49,11 +50,12 @@ func serveCmd() *cobra.Command {
 					}()
 				}
 				fmt.Printf("muninn web UI on http://%s\n", addr)
-				return web.ListenAndServe(ctx, addr, (&web.Server{App: a, Mu: mu}).Handler())
+				return web.ListenAndServe(ctx, addr, (&web.Server{App: a, Mu: mu, Binding: view.binding(a)}).Handler())
 			})
 		}}
 	c.Flags().StringVar(&addr, "addr", "", "loopback listen address (default from config, 127.0.0.1:7431)")
 	c.Flags().BoolVar(&noWatch, "no-watch", false, "do not watch sources")
+	view.flags(c)
 	return c
 }
 
@@ -67,43 +69,26 @@ func mcpCmd() *cobra.Command {
 				if _, err := a.Reindex(ctx); err != nil {
 					fmt.Fprintln(os.Stderr, "muninn: reindex:", err)
 				}
-				return mcpserver.RunStdio(ctx, a, version, mcpOptions(a, jcodeHome))
+				cwd, _ := os.Getwd()
+				return mcpserver.RunStdio(ctx, a, version, a.Bound(jcodeHome, cwd))
 			})
 		}}
 	c.Flags().StringVar(&jcodeHome, "jcode-home", "", "serve one jcode instance: same scopes as its recall hook (default $JCODE_HOME when set)")
 	return c
 }
 
-// mcpOptions gives a jcode instance's MCP server the same isolation as its
-// hook: its own memories, muninn global ones and the current project. New
-// memories default to the instance scope, so a client instance never writes
-// into the shared global scope by accident. Without an instance (Claude
-// Code, Codex, a bare `muninn mcp`) nothing is restricted, as before.
-func mcpOptions(a *app.App, jcodeHome string) mcpserver.Options {
-	if jcodeHome == "" {
-		jcodeHome = os.Getenv("JCODE_HOME")
-	}
-	if jcodeHome == "" {
-		return mcpserver.Options{}
-	}
-	inst := harness.InstanceForHome(a.JcodeInstances(), jcodeHome)
-	cwd, _ := os.Getwd()
-	opt := mcpserver.Options{Scopes: withProject(jcodeRecallScopes(inst, a.Cfg.JcodeShareGlobal), cwd)}
-	if inst.Name != "global" {
-		opt.DefaultScope = inst.Scope()
-	}
-	return opt
-}
-
 func tuiCmd() *cobra.Command {
-	return &cobra.Command{Use: "tui", Short: "Interactive terminal browser", RunE: func(*cobra.Command, []string) error {
+	var view viewFlags
+	c := &cobra.Command{Use: "tui", Short: "Interactive terminal browser", RunE: func(*cobra.Command, []string) error {
 		return withApp(func(ctx context.Context, a *app.App) error {
 			if _, err := a.Reindex(ctx); err != nil {
 				return err
 			}
-			return tui.Run(a)
+			return tui.Run(a, view.binding(a))
 		})
 	}}
+	view.flags(c)
+	return c
 }
 
 func selfPath() string {

@@ -55,7 +55,7 @@ func TestShowListsCanonicalTextAndAllOrigins(t *testing.T) {
 	os.Stdout = out
 	defer func() { os.Stdout = previous }()
 	command := showCmd()
-	command.SetArgs([]string{u.SID[:4]})
+	command.SetArgs([]string{u.SID[:4], "--all"})
 	err = command.Execute()
 	os.Stdout = previous
 	if err != nil {

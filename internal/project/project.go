@@ -15,13 +15,19 @@ import (
 
 // Project is a repository (or plain folder) muninn keeps memories for.
 type Project struct {
-	ID    string // stable: git root commit, or the id in .muninn/project
-	Label string // human name (the folder name)
-	Root  string // top-level directory
+	Client string // nearest client-root boundary, if any
+	ID     string // stable: git root commit, or the id in .muninn/project
+	Label  string // human name (the folder name)
+	Root   string // top-level directory
 }
 
 // Scope is the recall scope of the project's own memories.
-func (p Project) Scope() string { return "project:" + p.ID }
+func (p Project) Scope() string {
+	if p.Client != "" {
+		return "client:" + p.Client + ":" + p.ID
+	}
+	return "project:" + p.ID
+}
 
 // File is the shared memory file inside the repository.
 func (p Project) File() string { return filepath.Join(p.Root, ".muninn", "memories.jsonl") }
@@ -32,6 +38,28 @@ func (p Project) File() string { return filepath.Join(p.Root, ".muninn", "memori
 // repo without commits, the id lives in <root>/.muninn/project, created on
 // first use when create is true.
 func Find(dir string, create bool) (Project, error) {
+	client, root, err := ClientRoot(dir)
+	if err != nil {
+		return Project{}, err
+	}
+	if client == "" {
+		return find(dir, create)
+	}
+	p, err := find(dir, false)
+	if err == nil {
+		rel, e := filepath.Rel(root, p.Root)
+		if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			err = ErrNoProject
+		}
+	}
+	if err != nil {
+		p, err = withFileID(root, create)
+	}
+	p.Client = client
+	return p, err
+}
+
+func find(dir string, create bool) (Project, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return Project{}, err

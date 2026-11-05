@@ -18,11 +18,27 @@ import (
 	"github.com/veridit/muninn/internal/config"
 	"github.com/veridit/muninn/internal/harness"
 	"github.com/veridit/muninn/internal/index"
-	"github.com/veridit/muninn/internal/ingest"
 	"github.com/veridit/muninn/internal/project"
 	"github.com/veridit/muninn/internal/recall"
 	"github.com/veridit/muninn/internal/search"
 )
+
+type viewFlags struct {
+	all    bool
+	scopes []string
+	home   string
+}
+
+func (v *viewFlags) flags(c *cobra.Command) {
+	c.Flags().BoolVar(&v.all, "all", false, "owner view: read all instances (writes remain bound)")
+	c.Flags().StringSliceVar(&v.scopes, "scope", nil, scopeHelp)
+	c.Flags().StringVar(&v.home, "jcode-home", "", "bind to this JCODE_HOME (default $JCODE_HOME, otherwise global)")
+	c.MarkFlagsMutuallyExclusive("all", "scope")
+}
+func (v viewFlags) binding(a *app.App) app.Binding {
+	cwd, _ := os.Getwd()
+	return a.Bound(v.home, cwd).View(v.all, v.scopes)
+}
 
 var version = "dev"
 
@@ -33,7 +49,7 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(versionCmd(), indexCmd(), searchCmd(), recallCmd(), rememberCmd(), forgetCmd(), showCmd(),
+	root.AddCommand(versionCmd(), indexCmd(), searchCmd(), recallCmd(), rememberCmd(), forgetCmd(), showCmd(), rescopeCmd(),
 		listCmd(), relatedCmd(), statsCmd(), gcCmd(), hookCmd(), serveCmd(), mcpCmd(), tuiCmd(),
 		installCmd(), uninstallCmd(), configCmd(), jcodeCmd(), importCmd(), projectCmd(), syncCmd(), modelCmd())
 	if p := os.Getenv("MUNINN_CPUPROFILE"); p != "" {
@@ -102,15 +118,13 @@ func searchCmd() *cobra.Command {
 	var limit int
 	var explain, asJSON bool
 	var minScore float64
-	var scopes []string
+	var view viewFlags
 	c := &cobra.Command{Use: "search <query>", Short: "Search memories (keyword + community + semantic)", Args: cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return withApp(func(ctx context.Context, a *app.App) error {
 				o := a.RecallOptions()
 				o.Limit, o.MinScore = limit, minScore
-				if len(scopes) > 0 {
-					o.Scopes = scopes
-				}
+				o.Scopes = view.binding(a).Scopes
 				res, err := a.Searcher.Search(ctx, strings.Join(args, " "), o)
 				if err != nil {
 					return err
@@ -126,14 +140,14 @@ func searchCmd() *cobra.Command {
 	c.Flags().BoolVar(&explain, "explain", false, "show per-signal scores")
 	c.Flags().BoolVar(&asJSON, "json", false, "JSON output")
 	c.Flags().Float64Var(&minScore, "min-score", 0, "drop results below this total")
-	c.Flags().StringSliceVar(&scopes, "scope", nil, scopeHelp)
+	view.flags(c)
 	return c
 }
 
 func recallCmd() *cobra.Command {
 	var session, harnessName string
 	var stdin bool
-	var scopes []string
+	var view viewFlags
 	c := &cobra.Command{Use: "recall [message]", Short: "Automatic-recall block for a message (generic harness entry point)",
 		RunE: func(_ *cobra.Command, args []string) error {
 			msg := strings.Join(args, " ")
@@ -145,7 +159,8 @@ func recallCmd() *cobra.Command {
 				if _, err := ensureFresh(ctx, a); err != nil {
 					return err
 				}
-				resp, err := a.Recall.Recall(ctx, recall.Request{Session: session, Harness: harnessName, Message: msg, Scopes: scopes})
+				binding := view.binding(a)
+				resp, err := a.Recall.Recall(ctx, recall.Request{Session: session, Harness: harnessName, Message: msg, Scopes: binding.Scopes})
 				if err != nil {
 					return err
 				}
@@ -158,7 +173,7 @@ func recallCmd() *cobra.Command {
 	c.Flags().StringVar(&session, "session", "", "session id for per-session dedupe")
 	c.Flags().StringVar(&harnessName, "harness", "cli", "harness name for the injection log")
 	c.Flags().BoolVar(&stdin, "stdin", false, "read the message from stdin")
-	c.Flags().StringSliceVar(&scopes, "scope", nil, scopeHelp)
+	view.flags(c)
 	return c
 }
 
@@ -180,7 +195,7 @@ func ensureFresh(ctx context.Context, a *app.App) (index.Stats, error) {
 }
 
 func rememberCmd() *cobra.Command {
-	var category, scope string
+	var category, scope, home string
 	var tags []string
 	var inProject bool
 	c := &cobra.Command{Use: "remember <text>", Short: "Store a memory", Args: cobra.MinimumNArgs(1),
@@ -192,20 +207,14 @@ func rememberCmd() *cobra.Command {
 				}
 				scope = p.Scope()
 			}
-			m, reinforced, err := ingest.Remember(app.NativePath(), strings.Join(args, " "), category, scope, tags)
-			if err != nil {
-				return err
-			}
 			return withApp(func(ctx context.Context, a *app.App) error {
-				if _, err := a.Reindex(ctx); err != nil {
-					return err
-				}
-				u, err := a.DB.Resolve(m.ID)
+				cwd, _ := os.Getwd()
+				u, reinforced, err := a.Bound(home, cwd).Remember(ctx, a, strings.Join(args, " "), category, scope, tags)
 				if err != nil {
 					return err
 				}
 				if reinforced {
-					fmt.Printf("reinforced %s (strength %d)\n", u.SID, m.Strength)
+					fmt.Printf("reinforced %s\n", u.SID)
 				} else {
 					fmt.Println("remembered", u.SID)
 				}
@@ -213,19 +222,21 @@ func rememberCmd() *cobra.Command {
 			})
 		}}
 	c.Flags().StringVar(&category, "category", "fact", "fact | preference | correction | entity")
-	c.Flags().StringVar(&scope, "scope", "global", "global or a project name")
+	c.Flags().StringVar(&scope, "scope", "", "memory scope (default: bound instance)")
+	c.Flags().StringVar(&home, "jcode-home", "", "bind to this JCODE_HOME")
 	c.Flags().StringSliceVar(&tags, "tag", nil, "tag (repeatable)")
 	c.Flags().BoolVar(&inProject, "project", false, "store in this repository's project scope (shareable with `muninn sync`)")
 	return c
 }
 
 func forgetCmd() *cobra.Command {
-	return &cobra.Command{Use: "forget <memory-id>", Short: "Retire a memory or suppress an upstream memory locally", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+	var view viewFlags
+	c := &cobra.Command{Use: "forget <memory-id>", Short: "Retire a memory or suppress an upstream memory locally", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
 		return withApp(func(ctx context.Context, a *app.App) error {
 			if _, err := a.Reindex(ctx); err != nil {
 				return err
 			}
-			out, err := a.Forget(ctx, args[0])
+			out, err := view.binding(a).Forget(ctx, a, args[0])
 			if err != nil {
 				return err
 			}
@@ -233,12 +244,35 @@ func forgetCmd() *cobra.Command {
 			return nil
 		})
 	}}
+	view.flags(c)
+	return c
+}
+
+func rescopeCmd() *cobra.Command {
+	var target string
+	var cross bool
+	c := &cobra.Command{Use: "rescope <memory-id>", Short: "Admin: move an owned memory to another scope", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		return withApp(func(ctx context.Context, a *app.App) error {
+			cwd, _ := os.Getwd()
+			id, err := a.Bound("", cwd).Rescope(ctx, a, args[0], target, cross)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("rescoped %s to %s\n", id, target)
+			return nil
+		})
+	}}
+	c.Flags().StringVar(&target, "to", "", "literal target scope")
+	c.Flags().BoolVar(&cross, "cross-client", false, "admin approval to cross a client boundary")
+	c.MarkFlagRequired("to")
+	return c
 }
 
 func showCmd() *cobra.Command {
-	return &cobra.Command{Use: "show <memory-id>", Short: "Show memory text and its upstream mapping", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+	var view viewFlags
+	c := &cobra.Command{Use: "show <memory-id>", Short: "Show memory text and its upstream mapping", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
 		return withApp(func(ctx context.Context, a *app.App) error {
-			units, err := a.DB.ResolveAll(args[0])
+			units, err := view.binding(a).ResolveAll(a, args[0])
 			if err != nil {
 				return err
 			}
@@ -257,15 +291,19 @@ func showCmd() *cobra.Command {
 			return nil
 		})
 	}}
+	view.flags(c)
+	return c
 }
 
 func listCmd() *cobra.Command {
 	var limit int
+	var view viewFlags
 	c := &cobra.Command{Use: "list", Short: "List indexed memories", RunE: func(*cobra.Command, []string) error {
 		return withApp(func(ctx context.Context, a *app.App) error {
-			rows, err := a.DB.QueryContext(ctx, `SELECT sid, kind, scope, body FROM units u WHERE active=1 AND sid NOT IN (SELECT sid FROM suppressed)
+			where, params := search.ScopeSQL("u.scope", view.binding(a).Scopes)
+			rows, err := a.DB.QueryContext(ctx, `SELECT sid, kind, scope, body FROM units u WHERE (`+where+`) AND active=1 AND sid NOT IN (SELECT sid FROM suppressed)
     AND u.id=(SELECT c.id FROM units c JOIN sources cs ON cs.id=c.source_id WHERE c.sid=u.sid ORDER BY (cs.kind='native') DESC,c.updated_ns DESC,c.id LIMIT 1)
-    ORDER BY updated_ns DESC LIMIT ?`, limit)
+    ORDER BY updated_ns DESC LIMIT ?`, append(params, limit)...)
 			if err != nil {
 				return err
 			}
@@ -280,18 +318,21 @@ func listCmd() *cobra.Command {
 		})
 	}}
 	c.Flags().IntVarP(&limit, "limit", "n", 50, "max rows")
+	view.flags(c)
 	return c
 }
 
 func relatedCmd() *cobra.Command {
-	return &cobra.Command{Use: "related <unit-id>", Short: "Nearest neighbours of a memory", Args: cobra.ExactArgs(1),
+	var view viewFlags
+	c := &cobra.Command{Use: "related <unit-id>", Short: "Nearest neighbours of a memory", Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return withApp(func(ctx context.Context, a *app.App) error {
-				u, err := a.DB.Resolve(args[0])
+				binding := view.binding(a)
+				u, err := binding.Resolve(a, args[0])
 				if err != nil {
 					return err
 				}
-				res, err := a.Searcher.Related(ctx, u.ID, 10)
+				res, err := a.Searcher.RelatedIn(ctx, u.ID, 10, binding.Scopes)
 				if err != nil {
 					return err
 				}
@@ -299,12 +340,15 @@ func relatedCmd() *cobra.Command {
 				return nil
 			})
 		}}
+	view.flags(c)
+	return c
 }
 
 func statsCmd() *cobra.Command {
-	return &cobra.Command{Use: "stats", Short: "Index statistics", RunE: func(*cobra.Command, []string) error {
+	var view viewFlags
+	c := &cobra.Command{Use: "stats", Short: "Index statistics", RunE: func(*cobra.Command, []string) error {
 		return withApp(func(ctx context.Context, a *app.App) error {
-			s, err := app.Stats(ctx, a)
+			s, err := app.Stats(ctx, a, view.binding(a))
 			if err != nil {
 				return err
 			}
@@ -313,6 +357,8 @@ func statsCmd() *cobra.Command {
 			return nil
 		})
 	}}
+	view.flags(c)
+	return c
 }
 
 func gcCmd() *cobra.Command {
@@ -380,7 +426,7 @@ func runHook(name string, budget time.Duration) error {
 		}
 		defer a.Close()
 		inst := harness.InstanceForHome(a.JcodeInstances(), jh)
-		scopes := withProject(jcodeRecallScopes(inst, a.Cfg.JcodeShareGlobal), os.Getenv("JCODE_HOOK_CWD"))
+		scopes := a.Bound(jh, os.Getenv("JCODE_HOOK_CWD")).Scopes
 		resp, err := hookRecallWith(ctx, a, name, sid, msg, scopes)
 		if err != nil || resp.Block == "" {
 			logHook("jcode[%s] %s: msg=%q hits=0 skipped=%q elapsed=%s", inst.Name, short(sid), recall.Truncate(msg, 60), resp.Skipped, resp.Elapsed)
@@ -412,22 +458,7 @@ func hookRecall(ctx context.Context, harnessName, session, msg, cwd string) (rec
 		return recall.Response{}, err
 	}
 	defer a.Close()
-	// Claude Code / Codex have no instance isolation: recall stays
-	// unrestricted (nil scopes), as before. Project scoping applies where a
-	// scope list exists (jcode instances).
-	return hookRecallWith(ctx, a, harnessName, session, msg, withProject(nil, cwd))
-}
-
-// withProject adds the scope of the project at cwd (if any) to an explicit
-// scope list. A nil list means "no restriction" and stays nil.
-func withProject(scopes []string, cwd string) []string {
-	if cwd == "" || scopes == nil {
-		return scopes
-	}
-	if p, err := project.Find(cwd, false); err == nil {
-		return append(scopes, p.Scope())
-	}
-	return scopes
+	return hookRecallWith(ctx, a, harnessName, session, msg, a.Bound("", cwd).Scopes)
 }
 
 func hookRecallWith(ctx context.Context, a *app.App, harnessName, session, msg string, scopes []string) (recall.Response, error) {
@@ -435,17 +466,6 @@ func hookRecallWith(ctx context.Context, a *app.App, harnessName, session, msg s
 		logHook("reindex: %v", err)
 	}
 	return a.Recall.Recall(ctx, recall.Request{Session: harnessName + ":" + session, Harness: harnessName, Message: msg, Scopes: scopes})
-}
-
-// jcodeRecallScopes keeps client instances isolated: a session sees its own
-// instance's memories and muninn's own memories ("global" scope), never
-// another instance's. shareGlobal also admits the global ~/.jcode instance.
-func jcodeRecallScopes(inst harness.JcodeInstance, shareGlobal bool) []string {
-	scopes := []string{inst.Scope(), inst.Scope() + ":*", "global"}
-	if shareGlobal && inst.Name != "global" {
-		scopes = append(scopes, "jcode@global", "jcode@global:*")
-	}
-	return scopes
 }
 
 func dirExists(p string) bool {

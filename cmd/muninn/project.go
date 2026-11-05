@@ -42,12 +42,18 @@ looks like it contains a credential is withheld.`,
 			if err != nil {
 				return err
 			}
-			st, err := project.Sync(p, app.NativePath(), dry)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("%s%s (%s): %s\n", dryTag(dry), p.Label, p.ID, st)
-			return withApp(func(ctx context.Context, a *app.App) error { return reindexUnlessDry(ctx, a, dry) })
+			return withApp(func(ctx context.Context, a *app.App) error {
+				cwd, _ := os.Getwd()
+				if _, err := a.Bound("", cwd).WriteScope(p.Scope()); err != nil {
+					return err
+				}
+				st, err := project.Sync(p, app.NativePath(), dry)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("%s%s (%s): %s\n", dryTag(dry), p.Label, p.ID, st)
+				return reindexUnlessDry(ctx, a, dry)
+			})
 		}}
 	c.Flags().StringVar(&dir, "dir", "", "directory (default: current)")
 	c.Flags().BoolVar(&dry, "dry-run", false, "show counts without writing")

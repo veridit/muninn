@@ -59,7 +59,7 @@
     <textarea id="mtext" rows="3" style="width:100%" placeholder="A durable fact, preference or correction. Never secrets."></textarea>
     <div class="row">
       <select id="mcat"><option>fact</option><option>preference</option><option>correction</option><option>entity</option></select>
-      <input id="mscope" placeholder="scope (global)">
+      <input id="mscope" placeholder="scope (bound instance)">
       <input id="mtags" placeholder="tags, comma separated" style="flex:1">
       <button class="primary" id="mgo">Remember</button>
     </div>
@@ -129,7 +129,7 @@ async function loadStats() {
   $('#statgrid').innerHTML = cells.map(([k, v]) => `<div class="stat"><b>${v}</b>${k}</div>`).join('');
   $('#statjson').textContent = JSON.stringify(s, null, 2);
 }
-api('/api/stats').then(s => $('#status').textContent = `${s.active} memories · ${s.embedder}`).catch(() => {});
+api('/api/stats').then(s => $('#status').textContent = `${s.binding} · ${s.active} memories · ${s.embedder}`).catch(() => {});
 </script>
 </body>
 </html>

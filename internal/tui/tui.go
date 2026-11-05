@@ -4,6 +4,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ const (
 
 type model struct {
 	a       *app.App
+	binding app.Binding
 	input   textinput.Model
 	mode    mode
 	results []search.Result
@@ -44,17 +46,22 @@ type resultsMsg struct {
 }
 
 // Run starts the TUI.
-func Run(a *app.App) error {
-	_, err := tea.NewProgram(newModel(a), tea.WithAltScreen()).Run()
+func Run(a *app.App, bindings ...app.Binding) error {
+	_, err := tea.NewProgram(newModel(a, bindings...), tea.WithAltScreen()).Run()
 	return err
 }
 
-func newModel(a *app.App) model {
+func newModel(a *app.App, bindings ...app.Binding) model {
+	cwd, _ := os.Getwd()
+	b := a.Bound("", cwd)
+	if len(bindings) > 0 {
+		b = bindings[0]
+	}
 	in := textinput.New()
 	in.Placeholder = "search memories…"
 	in.Focus()
 	in.Prompt = "› "
-	return model{a: a, input: in, status: "tab: search/recall · ctrl+e: explain · ↑↓ move · ctrl+r: related · ctrl+d: forget · esc: quit"}
+	return model{a: a, binding: b, input: in, status: "tab: search/recall · ctrl+e: explain · ↑↓ move · ctrl+r: related · ctrl+d: forget · esc: quit"}
 }
 
 func (m model) Init() tea.Cmd { return textinput.Blink }
@@ -68,11 +75,11 @@ func (m model) run() tea.Cmd {
 			return resultsMsg{}
 		}
 		if md == modeRecall {
-			r, err := m.a.Recall.Recall(ctx, recall.Request{Message: q, Harness: "tui"})
+			r, err := m.a.Recall.Recall(ctx, recall.Request{Message: q, Harness: "tui", Scopes: m.binding.Scopes})
 			return resultsMsg{block: r.Block, elapsed: time.Since(t0), err: err}
 		}
 		o := m.a.RecallOptions()
-		o.MinScore, o.Limit = 0, 30
+		o.MinScore, o.Limit, o.Scopes = 0, 30, m.binding.Scopes
 		res, err := m.a.Searcher.Search(ctx, q, o)
 		return resultsMsg{res: res, elapsed: time.Since(t0), err: err}
 	}
@@ -119,13 +126,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+r":
 			if m.cursor < len(m.results) {
-				u, err := m.a.DB.Resolve(m.results[m.cursor].Unit.SID)
+				u, err := m.binding.Resolve(m.a, m.results[m.cursor].Unit.SID)
 				if err != nil {
 					m.status = err.Error()
 					return m, nil
 				}
 				id := u.ID
-				res, err := m.a.Searcher.Related(context.Background(), id, 15)
+				res, err := m.a.Searcher.RelatedIn(context.Background(), id, 15, m.binding.Scopes)
 				if err == nil {
 					m.results, m.cursor = res, 0
 					m.status = "neighbours of " + u.SID
@@ -135,7 +142,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+d":
 			if m.cursor < len(m.results) {
 				u := m.results[m.cursor].Unit
-				if out, err := m.a.Forget(context.Background(), u.SID); err == nil {
+				if out, err := m.binding.Forget(context.Background(), m.a, u.SID); err == nil {
 					note := out.Message
 					run := m.run()
 					return m, func() tea.Msg {
@@ -179,6 +186,9 @@ func (m model) View() string {
 		}
 		for i := start; i < len(m.results) && i < start+rows; i++ {
 			r := m.results[i]
+			if !m.binding.Allows(r.Unit.Scope) {
+				continue
+			}
 			line := fmt.Sprintf("[%s] %6.2f  %s", r.Unit.SID, r.Total, strings.Join(strings.Fields(r.Unit.Body), " "))
 			if m.explain {
 				line += "  \x1b[2m" + r.Explain() + "\x1b[0m"
@@ -193,6 +203,6 @@ func (m model) View() string {
 			}
 		}
 	}
-	b.WriteString("\n\x1b[2m" + m.status + "\x1b[0m")
+	b.WriteString("\n\x1b[2m" + m.binding.Name + " · " + m.status + "\x1b[0m")
 	return b.String()
 }

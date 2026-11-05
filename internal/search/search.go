@@ -255,7 +255,34 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 		total float64
 	}
 	cands := make([]cand, 0, len(scores))
+	// Apply binding before the candidate budget, not only before printing.
+	// Otherwise a large other-client corpus can crowd out visible matches.
+	visible := map[int64]bool{}
+	where, args := ScopeSQL("scope", o.Scopes)
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,scope,kind FROM units WHERE active=1 AND (`+where+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id int64
+		var scope, kind string
+		if err := rows.Scan(&id, &scope, &kind); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if Allowed(scope, o.Scopes) && Allowed(kind, o.Kinds) {
+			visible[id] = true
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
 	for id, a := range scores {
+		if !visible[id] {
+			continue
+		}
 		t := float64(a.kw) + math.Log(1+float64(a.comm)) + sem[id]*o.SemanticWeight
 		if t > 0.001 && t >= o.MinScore {
 			cands = append(cands, cand{id, a, t})
@@ -462,40 +489,56 @@ func (s *Searcher) RelatedIn(ctx context.Context, unitID int64, limit int, scope
 // scopeSQL turns a scope set into an index-friendly predicate: exact entries
 // become equality, "prefix*" entries become a half-open range. allowed()
 // remains the authority; this only narrows what SQLite reads.
-func scopeSQL(col string, set []string) (string, []any) {
-	if len(set) == 0 {
-		return "1", nil
-	}
-	var parts []string
-	var args []any
-	for _, s := range set {
+func ScopeSQL(col string, set []string) (string, []any) {
+	var positive, negative []string
+	var pa, na []any
+	for _, entry := range set {
+		s, deny := strings.CutPrefix(entry, "!")
+		var clause string
+		var args []any
 		if p, ok := strings.CutSuffix(s, "*"); ok {
-			if p == "" {
-				return "1", nil
-			}
-			parts = append(parts, "("+col+" >= ? AND "+col+" < ?)")
-			args = append(args, p, p+"\U0010FFFF")
+			clause = "(" + col + " >= ? AND " + col + " < ?)"
+			args = []any{p, p + "\U0010FFFF"}
 		} else {
-			parts = append(parts, col+" = ?")
-			args = append(args, s)
+			clause, args = col+" = ?", []any{s}
+		}
+		if deny {
+			negative, na = append(negative, "NOT ("+clause+")"), append(na, args...)
+		} else {
+			positive, pa = append(positive, clause), append(pa, args...)
 		}
 	}
-	return strings.Join(parts, " OR "), args
+	where := "1"
+	if len(positive) > 0 {
+		where = "(" + strings.Join(positive, " OR ") + ")"
+	}
+	if len(negative) > 0 {
+		where += " AND " + strings.Join(negative, " AND ")
+	}
+	return where, append(pa, na...)
 }
 
-// allowed reports whether v is permitted by set. An entry ending in "*" is a
-// prefix match ("jcode@brovs*" admits "jcode@brovs" and "jcode@brovs:abc").
-func allowed(v string, set []string) bool {
-	if len(set) == 0 {
-		return true
-	}
-	for _, s := range set {
-		if s == v || (strings.HasSuffix(s, "*") && strings.HasPrefix(v, s[:len(s)-1])) {
-			return true
+func scopeSQL(col string, set []string) (string, []any) { return ScopeSQL(col, set) }
+
+// Allowed applies exact/prefix allow rules and mandatory ! exclusions.
+// A deny-only set allows everything else. Empty means explicitly unrestricted.
+func Allowed(v string, set []string) bool {
+	positive, matched := false, false
+	for _, entry := range set {
+		s, deny := strings.CutPrefix(entry, "!")
+		match := s == v || (strings.HasSuffix(s, "*") && strings.HasPrefix(v, strings.TrimSuffix(s, "*")))
+		if deny && match {
+			return false
+		}
+		if !deny {
+			positive = true
+			matched = matched || match
 		}
 	}
-	return false
+	return !positive || matched
 }
+
+func allowed(v string, set []string) bool { return Allowed(v, set) }
 
 func intList(m map[int]bool) string {
 	ids := make([]int, 0, len(m))

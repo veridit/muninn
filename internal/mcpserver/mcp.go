@@ -5,12 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/veridit/muninn/internal/app"
-	"github.com/veridit/muninn/internal/ingest"
 	"github.com/veridit/muninn/internal/recall"
 )
 
@@ -36,7 +36,7 @@ type hitsOut struct {
 type rememberIn struct {
 	Content  string   `json:"content" jsonschema:"the fact, preference or correction to store"`
 	Category string   `json:"category,omitempty" jsonschema:"fact | preference | correction | entity"`
-	Scope    string   `json:"scope,omitempty" jsonschema:"global (default) or a project name"`
+	Scope    string   `json:"scope,omitempty" jsonschema:"binding scope (default: this instance)"`
 	Tags     []string `json:"tags,omitempty"`
 }
 
@@ -72,25 +72,14 @@ Save with memory_remember when the user states something that will matter in fut
 
 // Options restrict what one MCP session may see and change. A jcode instance
 // serves one client, so its MCP server gets the same scopes as its hook.
-type Options struct {
-	Scopes       []string // readable scopes; nil = unrestricted
-	DefaultScope string   // scope for memory_remember without one; "" = global
-}
-
-func (o Options) allowed(scope string) bool {
-	if len(o.Scopes) == 0 {
-		return true
-	}
-	for _, s := range o.Scopes {
-		if p, ok := strings.CutSuffix(s, "*"); ok && strings.HasPrefix(scope, p) || s == scope {
-			return true
-		}
-	}
-	return false
-}
+type Options = app.Binding
 
 // New builds the MCP server over an opened app.
 func New(a *app.App, version string, opt Options) *mcp.Server {
+	if opt.Name == "" && opt.Scopes == nil && opt.DefaultScope == "" {
+		cwd, _ := os.Getwd()
+		opt = a.Bound("", cwd)
+	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "muninn", Version: version}, &mcp.ServerOptions{Instructions: Instructions})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_search", Description: "Search local memories (keyword + concept community + semantic). Use before answering questions about the user, their projects or past decisions."},
@@ -117,23 +106,7 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_remember", Description: "Store a durable memory: a rule, preference, decision or correction the user stated that will matter in future sessions. One fact per call. Never store secrets."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in rememberIn) (*mcp.CallToolResult, idOut, error) {
-			if in.Category == "" {
-				in.Category = "fact"
-			}
-			if in.Scope == "" {
-				in.Scope = opt.DefaultScope
-			}
-			if in.Scope != "" && !opt.allowed(in.Scope) {
-				return nil, idOut{}, fmt.Errorf("scope %q is not available in this session", in.Scope)
-			}
-			m, re, err := ingest.Remember(app.NativePath(), in.Content, in.Category, in.Scope, in.Tags)
-			if err != nil {
-				return nil, idOut{}, err
-			}
-			if _, err := a.Reindex(ctx); err != nil {
-				return nil, idOut{}, err
-			}
-			u, err := a.DB.Resolve(m.ID)
+			u, re, err := opt.Remember(ctx, a, in.Content, in.Category, in.Scope, in.Tags)
 			if err != nil {
 				return nil, idOut{}, err
 			}
@@ -143,14 +116,7 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_forget", Description: "Retire a wrong or outdated memory by short id, unique prefix (4+ chars), or legacy id. Upstream harness notes are suppressed only in muninn, leaving upstream files unchanged. Follow with memory_remember for the correction."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in forgetIn) (*mcp.CallToolResult, idOut, error) {
-			u, err := a.DB.Resolve(in.ID)
-			if err != nil {
-				return nil, idOut{}, err
-			}
-			if !opt.allowed(u.Scope) {
-				return nil, idOut{}, fmt.Errorf("no visible memory %q", in.ID)
-			}
-			result, err := a.Forget(ctx, in.ID)
+			result, err := opt.Forget(ctx, a, in.ID)
 			if err != nil {
 				return nil, idOut{}, err
 			}
@@ -167,13 +133,9 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 			if ref == "" {
 				ref = fmt.Sprintf("#%d", in.UnitID)
 			}
-			u, err := a.DB.Resolve(ref)
+			u, err := opt.Resolve(a, ref)
 			if err != nil {
 				return nil, hitsOut{}, err
-			}
-			if !opt.allowed(u.Scope) {
-				out := hitsOut{Results: []hit{}}
-				return text(out), out, nil
 			}
 			res, err := a.Searcher.RelatedIn(ctx, u.ID, in.Limit, opt.Scopes)
 			if err != nil {
@@ -188,7 +150,7 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_stats", Description: "Index statistics."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, app.IndexStats, error) {
-			st, err := app.Stats(ctx, a)
+			st, err := app.Stats(ctx, a, opt)
 			return text(st), st, err
 		})
 

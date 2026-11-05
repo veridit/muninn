@@ -119,7 +119,12 @@ func Sync(p Project, nativePath string, dry bool) (SyncStats, error) {
 
 // originFor keys a repository memory by project and line id, so the same
 // line in every clone maps to the same native memory.
-func originFor(p Project, id string) string { return "repo:" + p.ID + "/" + id }
+func originFor(p Project, id string) string {
+	if p.Client != "" {
+		return "repo:client:" + p.Client + ":" + p.ID + "/" + id
+	}
+	return "repo:" + p.ID + "/" + id
+}
 
 // ReadFile parses a memories.jsonl file. Blank lines are ignored; a broken
 // line is an error that names its line number (merge conflicts show here).

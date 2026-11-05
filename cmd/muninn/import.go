@@ -24,6 +24,8 @@ func importCmd() *cobra.Command {
 	jc := &cobra.Command{Use: "jcode", Short: "Import jcode memories (default ~/.jcode; --all-instances or --jcode-home)",
 		RunE: func(*cobra.Command, []string) error {
 			return withApp(func(ctx context.Context, a *app.App) error {
+				cwd, _ := os.Getwd()
+				binding := a.Bound("", cwd)
 				var targets []harness.JcodeInstance
 				known := a.JcodeInstances()
 				if all {
@@ -33,8 +35,12 @@ func importCmd() *cobra.Command {
 					targets = append(targets, harness.InstanceForHome(known, h))
 				}
 				if len(targets) == 0 {
-					home, _ := os.UserHomeDir()
-					targets = append(targets, harness.InstanceForHome(known, filepath.Join(home, ".jcode")))
+					home := os.Getenv("JCODE_HOME")
+					if home == "" {
+						user, _ := os.UserHomeDir()
+						home = filepath.Join(user, ".jcode")
+					}
+					targets = append(targets, harness.InstanceForHome(known, home))
 				}
 				seen := map[string]bool{}
 				for _, t := range targets {
@@ -46,7 +52,7 @@ func importCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					st, err := ingest.MergeImport(app.NativePath(), items, dry)
+					st, err := binding.MergeImport(app.NativePath(), items, dry)
 					if err != nil {
 						return err
 					}
@@ -87,12 +93,15 @@ func importCmd() *cobra.Command {
 				return fmt.Errorf("%s: %w", src, err)
 			}
 			items := ingest.EngramItems(obs, ingest.EngramOptions{ProjectScopes: pm})
-			st, err := ingest.MergeImport(app.NativePath(), items, dry)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("%sengram (%s): %d read, %s\n", dryTag(dry), src, len(items), st)
-			return withApp(func(ctx context.Context, a *app.App) error { return reindexUnlessDry(ctx, a, dry) })
+			return withApp(func(ctx context.Context, a *app.App) error {
+				cwd, _ := os.Getwd()
+				st, err := a.Bound("", cwd).MergeImport(app.NativePath(), items, dry)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("%sengram (%s): %d read, %s\n", dryTag(dry), src, len(items), st)
+				return reindexUnlessDry(ctx, a, dry)
+			})
 		}}
 	en.Flags().StringVar(&file, "file", "", "an `engram export` JSON file")
 	en.Flags().StringVar(&dbPath, "db", "", "engram database (default ~/.engram/engram.db)")
