@@ -18,38 +18,51 @@ type ForgetResult struct {
 // Forget resolves every public identifier through the same store resolver.
 // Non-owned source files are never modified.
 func (a *App) Forget(ctx context.Context, ref string) (ForgetResult, error) {
-	u, err := a.DB.Resolve(ref)
+	units, err := a.DB.ResolveAll(ref)
 	if err != nil {
 		return ForgetResult{}, err
 	}
-	var kind, path string
-	if err := a.DB.QueryRow(`SELECT kind,path FROM sources WHERE id=?`, u.SourceID).Scan(&kind, &path); err != nil {
-		return ForgetResult{}, err
-	}
-	out := ForgetResult{ID: u.SID}
-	if kind == "native" {
+	out := ForgetResult{ID: units[0].SID}
+	retired, mirrors := false, false
+	for _, u := range units {
+		var kind, path string
+		if err := a.DB.QueryRow(`SELECT kind,path FROM sources WHERE id=?`, u.SourceID).Scan(&kind, &path); err != nil {
+			return out, err
+		}
+		if kind != "native" {
+			mirrors = true
+			continue
+		}
 		ok, err := ingest.Forget(path, u.Key)
 		if err != nil {
 			return out, err
 		}
-		if !ok {
-			return out, fmt.Errorf("no active memory %q", ref)
-		}
-		// Update immediately as well as the incremental index, so other callers
-		// never see an active forgotten row if the source scan is deferred.
+		retired = retired || ok
 		if _, err := a.DB.Exec(`UPDATE units SET active=0 WHERE id=?`, u.ID); err != nil {
 			return out, err
 		}
-		if _, err := a.Reindex(ctx); err != nil {
-			return out, err
-		}
-		out.Message = "forgot " + u.SID
-	} else {
-		if err := a.DB.Suppress(u.SID); err != nil {
+	}
+	if mirrors {
+		if err := a.DB.Suppress(out.ID); err != nil {
 			return out, err
 		}
 		out.Suppressed = true
-		out.Message = "suppressed " + u.SID + " in muninn (upstream files unchanged)"
+	}
+	if !retired && !mirrors {
+		return out, fmt.Errorf("no active memory %q", ref)
+	}
+	if retired {
+		if _, err := a.Reindex(ctx); err != nil {
+			return out, err
+		}
+	}
+	switch {
+	case retired && mirrors:
+		out.Message = "forgot " + out.ID + " and suppressed its mirrors in muninn (upstream files unchanged)"
+	case mirrors:
+		out.Message = "suppressed " + out.ID + " in muninn (upstream files unchanged)"
+	default:
+		out.Message = "forgot " + out.ID
 	}
 	return out, nil
 }

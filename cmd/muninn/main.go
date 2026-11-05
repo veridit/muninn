@@ -238,15 +238,22 @@ func forgetCmd() *cobra.Command {
 func showCmd() *cobra.Command {
 	return &cobra.Command{Use: "show <memory-id>", Short: "Show memory text and its upstream mapping", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
 		return withApp(func(ctx context.Context, a *app.App) error {
-			u, err := a.DB.Resolve(args[0])
+			units, err := a.DB.ResolveAll(args[0])
 			if err != nil {
 				return err
 			}
-			o, err := a.Origin(u)
-			if err != nil {
-				return err
+			canonical := units[0]
+			fmt.Printf("[%s] %s\n", canonical.SID, canonical.Body)
+			for _, u := range units {
+				o, err := a.Origin(u)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("source: %s\npath: %s\nkey: %s\norigin: %s\n", o.Source, o.Path, o.Key, o.Origin)
+				if u.ID != canonical.ID && u.ContentHash != canonical.ContentHash {
+					fmt.Printf("mirror text: %s\n", u.Body)
+				}
 			}
-			fmt.Printf("[%s] %s\nsource: %s\npath: %s\nkey: %s\norigin: %s\n", u.SID, u.Body, o.Source, o.Path, o.Key, o.Origin)
 			return nil
 		})
 	}}
@@ -256,7 +263,9 @@ func listCmd() *cobra.Command {
 	var limit int
 	c := &cobra.Command{Use: "list", Short: "List indexed memories", RunE: func(*cobra.Command, []string) error {
 		return withApp(func(ctx context.Context, a *app.App) error {
-			rows, err := a.DB.QueryContext(ctx, `SELECT sid, kind, scope, body FROM units WHERE active=1 AND sid NOT IN (SELECT sid FROM suppressed) ORDER BY updated_ns DESC LIMIT ?`, limit)
+			rows, err := a.DB.QueryContext(ctx, `SELECT sid, kind, scope, body FROM units u WHERE active=1 AND sid NOT IN (SELECT sid FROM suppressed)
+    AND u.id=(SELECT c.id FROM units c JOIN sources cs ON cs.id=c.source_id WHERE c.sid=u.sid ORDER BY (cs.kind='native') DESC,c.updated_ns DESC,c.id LIMIT 1)
+    ORDER BY updated_ns DESC LIMIT ?`, limit)
 			if err != nil {
 				return err
 			}

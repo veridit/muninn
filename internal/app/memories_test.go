@@ -125,3 +125,88 @@ func TestImportRerunRetainsSIDs(t *testing.T) {
 	}
 	t.Logf("import rerun %s; sids unchanged=%d", second, len(sids))
 }
+
+func TestHarnessAndImportShareSIDAndNativeIsCanonical(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("MUNINN_HOME", home)
+	t.Setenv("MUNINN_NO_EMBED", "1")
+	a, err := Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	dir := filepath.Join(home, "harness-memory")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "global.json")
+	original := []byte(`{"graph_version":1,"memories":{"mem_shared":{"id":"mem_shared","content":"quartz banana policy upstream","active":true}}}`)
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, _, err := a.Indexer.IndexJcode(ctx, dir, "jcode@test", &index.Stats{}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := ingest.JcodeImportItems(dir, "jcode@test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("import items: %+v", items)
+	}
+	if _, err := ingest.MergeImport(NativePath(), items, false); err != nil {
+		t.Fatal(err)
+	}
+	mems, err := ingest.LoadNative(NativePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mems[0].Content = "quartz banana policy corrected locally"
+	if err := ingest.SaveNative(NativePath(), mems); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := a.Indexer.IndexNative(ctx, NativePath(), &index.Stats{}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := a.DB.ResolveAll("jcode:mem_shared")
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("resolved twins: %+v %v", rows, err)
+	}
+	if len(rows[0].SID) != 6 || rows[0].SID != rows[1].SID {
+		t.Fatalf("same identity received different ids: %+v", rows)
+	}
+	if rows[0].Body != mems[0].Content || !a.DB.IsCanonical(rows[0]) || a.DB.IsCanonical(rows[1]) {
+		t.Fatalf("native not canonical: %+v", rows)
+	}
+	for _, ref := range []string{rows[0].SID, rows[0].SID[:4], rows[0].Key, "jcode:mem_shared"} {
+		got, err := a.DB.ResolveAll(ref)
+		if err != nil || len(got) != 2 || got[0].ID != rows[0].ID {
+			t.Fatalf("twins through %s: %+v %v", ref, got, err)
+		}
+	}
+	a.Recall.Options = search.DefaultOptions()
+	a.Recall.Options.MinScore = 0
+	a.Recall.MinSemantic, a.Recall.RelativeFloor = 0, 0
+	resp, err := a.Recall.Recall(ctx, recall.Request{Message: "quartz banana policy"})
+	if err != nil || len(resp.Hits) != 1 || resp.Hits[0].Source != "native" || resp.Hits[0].Text != mems[0].Content {
+		t.Fatalf("canonical recall: %+v %v", resp, err)
+	}
+	out, err := a.Forget(ctx, rows[0].SID)
+	if err != nil || !out.Suppressed || !strings.Contains(out.Message, "forgot") {
+		t.Fatalf("forget twins: %+v %v", out, err)
+	}
+	resp, err = a.Recall.Recall(ctx, recall.Request{Message: "quartz banana policy"})
+	if err != nil || len(resp.Hits) != 0 {
+		t.Fatalf("twins revived: %+v %v", resp, err)
+	}
+	mems, err = ingest.LoadNative(NativePath())
+	if err != nil || len(mems) != 1 || mems[0].Active {
+		t.Fatalf("native not retired: %+v %v", mems, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(original) {
+		t.Fatalf("harness file changed: %s %v", got, err)
+	}
+	t.Logf("shared identity sid=%s rows=%d recall_hits=1 canonical=native after_forget_hits=%d", rows[0].SID, len(rows), len(resp.Hits))
+}

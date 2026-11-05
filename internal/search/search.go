@@ -277,6 +277,7 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 	// (a jcode memory and its imported copy) is one result.
 	results := make([]Result, 0, len(keep))
 	seenText := map[string]bool{}
+	seenSID := map[string]bool{}
 	for _, c := range cands {
 		if !keep[c.id] {
 			continue
@@ -289,10 +290,11 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 		if err != nil {
 			return nil, err
 		}
-		if !u.Active || !allowed(u.Scope, o.Scopes) || !allowed(u.Kind, o.Kinds) || seenText[u.ContentHash] {
+		if !u.Active || !s.DB.IsCanonical(u) || !allowed(u.Scope, o.Scopes) || !allowed(u.Kind, o.Kinds) || seenSID[u.SID] || seenText[u.ContentHash] {
 			continue
 		}
 		seenText[u.ContentHash] = true
+		seenSID[u.SID] = true
 		r := Result{Unit: u, Keyword: a.kw, Community: a.comm, Semantic: sem[id], Total: c.total, SemanticOn: semOn}
 		if len(words) > 0 {
 			r.Coverage = math.Min(1, float64(a.words)/float64(len(words)))
@@ -442,11 +444,13 @@ func (s *Searcher) RelatedIn(ctx context.Context, unitID int64, limit int, scope
 	}
 	rows.Close()
 	var out []Result
+	seenSID := map[string]bool{}
 	for _, x := range list {
 		u, err := s.DB.GetUnit(x.id)
-		if err != nil || !u.Active || !allowed(u.Scope, scopes) {
+		if err != nil || !u.Active || !s.DB.IsCanonical(u) || seenSID[u.SID] || !allowed(u.Scope, scopes) {
 			continue
 		}
+		seenSID[u.SID] = true
 		out = append(out, Result{Unit: u, Semantic: x.sim, Total: x.sim})
 		if len(out) >= limit {
 			break

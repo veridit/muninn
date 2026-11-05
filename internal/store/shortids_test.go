@@ -54,7 +54,7 @@ func TestSIDCollisionExtension(t *testing.T) {
 	for i, key := range []string{"one", "two", "three"} {
 		// The full hash parameter is the tiny collision hook. No production
 		// randomness or weakened production hash is involved.
-		sid, err := allocateSID(d.DB, key, "abcdef0123456789", src, key)
+		sid, err := allocateSID(d.DB, key, "abcdef0123456789")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -79,11 +79,11 @@ func TestSIDOldSchemaMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	native := filepath.Join(t.TempDir(), "memories.json")
-	if err := os.WriteFile(native, []byte(`{"memories":[{"id":"imp_legacy","origin":"engram:upstream"}]}`), 0600); err != nil {
+	if err := os.WriteFile(native, []byte(`{"memories":[{"id":"imp_legacy","origin":"engram:upstream"},{"id":"imp_jcode","origin":"jcode@test:proj/mem_old"}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := raw.Exec(`INSERT INTO sources(id,kind,path) VALUES(1,'native',?),(2,'jcode','harness');
- INSERT INTO units(source_id,key,content_hash,kind,body,scope) VALUES(1,'imp_legacy','h1','memory','a','global'),(2,'mem_old','h2','memory','b','jcode@test:proj')`, native); err != nil {
+ INSERT INTO units(source_id,key,content_hash,kind,body,scope) VALUES(1,'imp_legacy','h1','memory','a','global'),(2,'mem_old','h2','memory','b','jcode@test:proj'),(1,'imp_jcode','h3','memory','local edit','jcode@test:proj')`, native); err != nil {
 		t.Fatal(err)
 	}
 	raw.Close()
@@ -95,7 +95,7 @@ func TestSIDOldSchemaMigration(t *testing.T) {
 	if err := d.QueryRow(`SELECT COUNT(*),COUNT(DISTINCT sid),SUM(sid IS NULL OR sid='') FROM units`).Scan(&total, &distinct, &missing); err != nil {
 		t.Fatal(err)
 	}
-	if total != 2 || distinct != 2 || missing != 0 {
+	if total != 3 || distinct != 2 || missing != 0 {
 		t.Fatalf("migration total=%d distinct=%d missing=%d", total, distinct, missing)
 	}
 	u, err := d.Resolve("imp_legacy")
@@ -104,6 +104,10 @@ func TestSIDOldSchemaMigration(t *testing.T) {
 	}
 	if u.Origin != "engram:upstream" || u.SID != shortid.Full(u.Origin)[:6] {
 		t.Fatalf("origin lost: %+v", u)
+	}
+	twins, err := d.ResolveAll("jcode:mem_old")
+	if err != nil || len(twins) != 2 || twins[0].SID != twins[1].SID || twins[0].Key != "imp_jcode" {
+		t.Fatalf("migrated twins: %+v %v", twins, err)
 	}
 	sid := u.SID
 	d.Close()
@@ -198,7 +202,7 @@ func TestSIDMigrationCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("migration elapsed=%s units=%d distinct_sids=%d max_sid_length=%d null_sids=%d", elapsed, units, distinct, maxLen, nulls)
-	if units != distinct || nulls != 0 {
+	if nulls != 0 {
 		t.Fatal("sid migration incomplete")
 	}
 }
