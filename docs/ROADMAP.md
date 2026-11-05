@@ -1,21 +1,24 @@
 # muninn roadmap
 
-Decided by the user on 2026-11-05 13:36, not built yet.
+Decided by the user on 2026-11-05. Completed items are marked below.
 
-## Short ids, like huginn tasks
+## Short ids, like huginn tasks (done 2026-11-05)
 
-Today an injected memory shows up as
-`jcode:mem_1793616201092_18365359773263918457` (44 chars), and native ones as
-`mem_...`. That is long, costs tokens in every recall, and leaks where a memory
-was imported from.
-
-- Every memory gets a 6-char Crockford base32 id (`k7m2qx`), the same scheme
-  as huginn. Any unique prefix resolves.
-- Where it came from (jcode id, engram id, file path) moves into a mapping
-  table (`origins`: short id -> source, upstream id). It is shown only on
-  `muninn show <id>` or `--explain`, never in recall output.
-- `forget`, MCP and the web UI accept the short id and the old long ids.
-- Recall lines become `- [2026-11-02 k7m2qx] ...`.
+- [x] Every indexed memory gets a deterministic 6-char lowercase Crockford
+  base32 id (`k7m2qx`), extended on collision. Unique prefixes of at least four
+  characters resolve, as do permanent legacy ids.
+- [x] Existing databases backfill `units.sid` automatically. The unique
+  `memory_ids` registry maps sid to identity. `units.sid` is indexed, not unique:
+  imported and live harness rows of the same memory share one sid.
+  Upstream identity stays in `units.origin`, `sources`, and the original unit key.
+  Native JSON stores `sid` without changing import idempotency or legacy ids.
+- [x] `muninn show <id>` exposes source kind, path, key and origin. `--explain`
+  exposes origin, not the ordinary injected recall block.
+- [x] CLI, MCP, TUI and web actions use one resolver. Forgetting a harness note
+  suppresses it only in muninn, with no upstream writes. A native imported copy
+  is canonical, and forget retires it and suppresses every harness mirror.
+- [x] Recall lines are `- [2026-11-02 k7m2qx] ...`, with shorter dated-note and
+  correction instructions.
 
 ## Project memories on their own branch
 

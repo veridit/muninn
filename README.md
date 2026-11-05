@@ -124,6 +124,41 @@ muninn tui                           # interactive browser
 muninn serve                         # watcher + web UI on http://127.0.0.1:7431
 ```
 
+### Memory ids and corrections
+
+Every indexed memory has a short lowercase Crockford base32 id, usually six
+characters, for example `k7m2qx`. Recall entries look like:
+
+```text
+- [2026-11-02 k7m2qx] The project uses 4-space indentation.
+```
+
+Ids are deterministic from the stable upstream identity, not the text. A hash
+collision extends the new id to seven or more characters. `remember` stores the
+short id alongside the permanent legacy id in `memories.json`. Existing databases
+are migrated automatically on open, without re-embedding. Source keys and import
+origins remain the idempotency keys, so importing again does not create copies.
+
+```sh
+muninn show k7m2qx                    # text, source kind, path, upstream key/origin
+muninn forget k7m2                    # any unique prefix of at least 4 characters
+muninn remember "The corrected fact"
+```
+
+`forget`, `show`, `related`, MCP and the web UI also accept the old native/import
+ids and full `jcode:<upstream-id>` references. Ambiguous prefixes fail explicitly.
+For memories muninn owns, forget retires the memory. For harness memories and
+markdown notes, it suppresses recall **only in muninn**, even after reindexing.
+It never changes the harness's files. The command and API response say which
+operation happened. MCP clients use `memory_forget` then `memory_remember` to fix
+wrong or outdated notes, and `memory_related` accepts the same ids in `id`.
+A live harness row and its imported copy share the same sid. The native imported
+copy is canonical, including local edits. Search and recall show it once. `show`
+lists every origin and any divergent mirror text, and `forget` retires the native
+copy and suppresses all mirrors. Identity uniqueness is enforced in `memory_ids`,
+while `units.sid` is a non-unique index because several rows can represent one
+memory.
+
 ### Wire it into your agent
 
 ```sh

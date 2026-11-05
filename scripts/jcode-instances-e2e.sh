@@ -4,7 +4,7 @@
 # as each instance would and check that every injection stays in-instance.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-root=$(mktemp -d)
+root=$(mktemp -d "${TMPDIR:-/tmp}/muninn-instances.XXXXXX")
 trap 'rm -rf "$root"' EXIT
 export MUNINN_HOME="$root/muninn"
 go build -o bin/muninn ./cmd/muninn
@@ -45,8 +45,8 @@ for inst in alpha beta; do
   JCODE_HOME="$h" JCODE_HOOK_SESSION_ID=s1 "$m" hook jcode
   got=$(cat "$h/injected")
   other=$([ $inst = alpha ] && echo Beta || echo Alpha)
-  # recall lines are "- [<date> <id>] text" or "- [<id>] text"
-  if grep -q "^$h$" <<<"$got" && grep -qiE "^- (\[[^]]*\] )?${inst} deploys" <<<"$got" && ! grep -q "$other deploys" <<<"$got"; then
+  # Require a short Crockford id, with an optional date.
+  if grep -q "^$h$" <<<"$got" && grep -qiE "^- \[([0-9]{4}-[0-9]{2}-[0-9]{2} )?[0123456789abcdefghjkmnpqrstvwxyz]{6,}\] ${inst} deploys" <<<"$got" && ! grep -q "$other deploys" <<<"$got"; then
     echo "$inst: injected own memory only: ok"
   else
     echo "$inst: FAIL"; echo "$got"; fail=1

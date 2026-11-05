@@ -14,12 +14,12 @@ echo "== claude hook, same session again (dedupe -> no output)"; echo "$payload"
 echo "== codex hook, own-output loop guard (no output)"
 echo '{"session_id":"s-9","prompt":"[muninn recall] - banana mode","hook_event_name":"UserPromptSubmit"}' | ./bin/muninn hook codex; echo "[end]"
 echo "== web API"
-./bin/muninn serve --addr 127.0.0.1:17431 --no-watch > /tmp/muninn-e2e-serve.log 2>&1 &
+./bin/muninn serve --addr 127.0.0.1:17431 --no-watch > "$MUNINN_HOME/serve-e2e.log" 2>&1 &
 pid=$!
 trap 'kill $pid 2>/dev/null' EXIT
 for _ in 1 2 3 4 5 6 7 8 9 10; do curl -s -o /dev/null http://127.0.0.1:17431/api/stats && break; sleep 0.3; done
 curl -s 'http://127.0.0.1:17431/api/search?q=banana%20pie' | python3 -c "import json,sys;d=json.load(sys.stdin);print('search top:', d['results'][0]['text'][:60])"
-curl -s -X POST -H 'Content-Type: application/json' -d '{"message":"what indentation"}' http://127.0.0.1:17431/api/recall | python3 -c "import json,sys;d=json.load(sys.stdin);print('recall block:', d['block'].splitlines()[1][:70], '|', d['elapsed'])"
+curl -s -X POST -H 'Content-Type: application/json' -d '{"message":"4-space indentation"}' http://127.0.0.1:17431/api/recall | python3 -c "import json,sys;d=json.load(sys.stdin);print('recall block:', d['block'].splitlines()[1][:70], '|', d['elapsed'])"
 printf 'index.html: '; curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:17431/
 printf 'foreign Host header refused: '; curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: evil.example' http://127.0.0.1:17431/api/stats
 printf 'cross-origin POST refused: '; curl -s -o /dev/null -w '%{http_code}\n' -X POST -H 'Origin: http://evil.example' -d '{}' http://127.0.0.1:17431/api/remember
