@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/veridit/muninn/internal/shortid"
@@ -233,8 +234,8 @@ func (d *DB) ResolveAll(ref string) ([]Unit, error) {
 	if err != sql.ErrNoRows {
 		return nil, err
 	}
-	rows, err := d.Query(`SELECT DISTINCT u.origin FROM units u JOIN sources s ON s.id=u.source_id WHERE u.key=? OR s.kind||':'||u.key=? OR CAST(u.id AS TEXT)=?
- UNION SELECT DISTINCT u.origin FROM units u JOIN unit_aliases a ON a.source_id=u.source_id AND a.key=u.key WHERE a.alias=?`, ref, ref, ref, ref)
+	rows, err := d.Query(`SELECT DISTINCT u.origin FROM units u JOIN sources s ON s.id=u.source_id WHERE u.key=? OR s.kind||':'||u.key=?
+ UNION SELECT DISTINCT u.origin FROM units u JOIN unit_aliases a ON a.source_id=u.source_id AND a.key=u.key WHERE a.alias=?`, ref, ref, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -269,6 +270,19 @@ func (d *DB) ResolveAll(ref string) ([]Unit, error) {
 		rows.Close()
 		if err != nil {
 			return nil, err
+		}
+	}
+	if len(identities) == 0 {
+		// Crockford includes digits. Numeric sid prefixes must win over legacy
+		// row ids. A # prefix explicitly selects an old numeric row id.
+		if id, err := strconv.ParseInt(strings.TrimPrefix(ref, "#"), 10, 64); err == nil {
+			var v string
+			err = d.QueryRow(`SELECT origin FROM units WHERE id=?`, id).Scan(&v)
+			if err == nil {
+				identities = append(identities, v)
+			} else if err != sql.ErrNoRows {
+				return nil, err
+			}
 		}
 	}
 	if len(identities) == 0 {

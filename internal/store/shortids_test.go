@@ -184,6 +184,33 @@ func TestSIDOriginTransitionRetainsAlias(t *testing.T) {
 	}
 }
 
+func TestSIDNumericPrefixPrecedesLegacyRowID(t *testing.T) {
+	d := testShortDB(t)
+	src, _, _, _ := d.Source("native", "fixture")
+	first, err := d.UpsertUnit(Unit{SourceID: src, Key: "mem_first", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := d.UpsertUnit(Unit{SourceID: src, Key: "mem_second", Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`UPDATE units SET sid='1234ab' WHERE id=?`, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`UPDATE units SET id=1234 WHERE id=?`, second); err != nil {
+		t.Fatal(err)
+	}
+	u, err := d.Resolve("1234")
+	if err != nil || u.ID != first {
+		t.Fatalf("numeric sid prefix shadowed: %+v %v", u, err)
+	}
+	u, err = d.Resolve("#1234")
+	if err != nil || u.ID != 1234 {
+		t.Fatalf("explicit legacy row id failed: %+v %v", u, err)
+	}
+}
+
 // Optional acceptance probe. The caller must supply a disposable DB snapshot.
 func TestSIDMigrationCopy(t *testing.T) {
 	path := os.Getenv("MUNINN_MIGRATION_COPY")

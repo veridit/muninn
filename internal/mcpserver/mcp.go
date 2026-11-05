@@ -165,7 +165,7 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 			}
 			ref := in.ID
 			if ref == "" {
-				ref = fmt.Sprint(in.UnitID)
+				ref = fmt.Sprintf("#%d", in.UnitID)
 			}
 			u, err := a.DB.Resolve(ref)
 			if err != nil {
