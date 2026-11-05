@@ -93,6 +93,20 @@ func TestRareTermsAndBinding(t *testing.T) {
 	}
 }
 
+func TestIdentifiersDoNotPromoteBoilerplate(t *testing.T) {
+	ids := identifierTerms("SWARM COMPLETION REPORT REQUIRED / 10 13 TASK-123 CamelCase internal/recall/recall.go abc123")
+	for _, word := range []string{"swarm", "completion", "report", "required", "/", "10", "13"} {
+		if ids[word] {
+			t.Errorf("ordinary heading/count promoted: %s", word)
+		}
+	}
+	for _, word := range []string{"task-123", "camelcase", "internal/recall/recall.go", "abc123"} {
+		if !ids[word] {
+			t.Errorf("identifier lost: %s", word)
+		}
+	}
+}
+
 func TestBoilerplateCountsSessionsAndSeparatesBindings(t *testing.T) {
 	e := testEngine(t)
 	ctx := context.Background()

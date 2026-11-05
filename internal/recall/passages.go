@@ -79,16 +79,17 @@ func identifierTerms(text string) map[string]bool {
 	for _, raw := range strings.Fields(text) {
 		raw = strings.Trim(raw, "`\"'()[]{},:;")
 		special := strings.ContainsAny(raw, "/_")
-		upper, lower, digit, camel := false, false, false, false
+		letter, digit, camel := false, false, false
 		previousLower := false
 		for _, r := range raw {
 			camel = camel || (previousLower && unicode.IsUpper(r))
 			previousLower = unicode.IsLower(r)
-			upper = upper || unicode.IsUpper(r)
-			lower = lower || unicode.IsLower(r)
+			letter = letter || unicode.IsLetter(r)
 			digit = digit || unicode.IsDigit(r)
 		}
-		if special || camel || (upper && !lower && len(raw) > 1) || digit {
+		// Uppercase prose (for example a heading) and standalone numeric
+		// counters are not identifiers. A bare slash is not a path.
+		if letter && (special || camel || digit) {
 			if strings.Contains(raw, "/") {
 				out[strings.ToLower(strings.TrimRight(raw, "."))] = true
 				continue
