@@ -61,6 +61,7 @@ type Indexer struct {
 // Candidate is a unit as produced by a source, before storage.
 type Candidate struct {
 	Key, Kind, Title, Body, Category, Scope string
+	SID, Origin                             string
 	Tags                                    []string
 	Active                                  bool
 	Updated                                 time.Time
@@ -79,7 +80,7 @@ func (ix *Indexer) SyncSource(sourceID int64, cands []Candidate, st *Stats) (dir
 		seen[c.Key] = true
 		text := EmbeddingText(c.Title, c.Body)
 		ident := ContentHash(text + "\x00" + c.Category + "\x00" + c.Scope + "\x00" +
-			strconv.FormatBool(c.Active) + "\x00" + strings.Join(c.Tags, " "))
+			strconv.FormatBool(c.Active) + "\x00" + c.Origin + "\x00" + strings.Join(c.Tags, " "))
 		if old, ok := existing[c.Key]; ok && old[1] == ident {
 			st.Unchanged++
 			continue
@@ -92,7 +93,7 @@ func (ix *Indexer) SyncSource(sourceID int64, cands []Candidate, st *Stats) (dir
 			}
 		}
 		id, err := ix.DB.UpsertUnit(store.Unit{
-			SourceID: sourceID, Key: c.Key, ContentHash: ContentHash(text), Ident: ident, Kind: c.Kind,
+			SourceID: sourceID, SID: c.SID, Origin: c.Origin, Key: c.Key, ContentHash: ContentHash(text), Ident: ident, Kind: c.Kind,
 			Title: c.Title, Body: c.Body, Category: c.Category, Tags: c.Tags, Scope: c.Scope,
 			Active: c.Active, Updated: c.Updated,
 		})
@@ -174,18 +175,39 @@ func (ix *Indexer) IndexJcode(ctx context.Context, dir, prefix string, st *Stats
 
 // IndexNative indexes muninn's own memory store.
 func (ix *Indexer) IndexNative(ctx context.Context, path string, st *Stats) ([]int64, []int64, error) {
-	return ix.indexFile(path, "native", st, func() ([]Candidate, error) {
+	var loaded []ingest.NativeMemory
+	dirty, removed, err := ix.indexFile(path, "native", st, func() ([]Candidate, error) {
 		mems, err := ingest.LoadNative(path)
 		if err != nil {
 			return nil, err
 		}
+		loaded = mems
 		out := make([]Candidate, 0, len(mems))
 		for _, m := range mems {
-			out = append(out, Candidate{Key: m.ID, Kind: "memory", Title: m.Title, Body: m.Content, Category: m.Category,
+			out = append(out, Candidate{Key: m.ID, SID: m.SID, Origin: m.Origin, Kind: "memory", Title: m.Title, Body: m.Content, Category: m.Category,
 				Tags: m.Tags, Scope: m.Scope, Active: m.Active, Updated: m.Updated})
 		}
 		return out, nil
 	})
+	if err != nil {
+		return dirty, removed, err
+	}
+	// The database sees all sources, so its collision extension is authoritative.
+	changed := false
+	for i := range loaded {
+		var sid string
+		if err := ix.DB.QueryRow(`SELECT u.sid FROM units u JOIN sources s ON s.id=u.source_id WHERE s.path=? AND u.key=?`, path, loaded[i].ID).Scan(&sid); err != nil {
+			return dirty, removed, err
+		}
+		if sid != loaded[i].SID {
+			loaded[i].SID = sid
+			changed = true
+		}
+	}
+	if changed {
+		err = ingest.SaveNative(path, loaded)
+	}
+	return dirty, removed, err
 }
 
 // IndexMarkdown indexes markdown files under roots, split by heading.

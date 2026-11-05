@@ -15,6 +15,8 @@ import (
 // Unit is one recallable piece of text: a memory, or a markdown section.
 type Unit struct {
 	ID          int64
+	SID         string
+	Origin      string // stable identity, never the display id
 	SourceID    int64
 	Key         string // stable key within the source (memory id, or file#line)
 	ContentHash string
@@ -176,7 +178,12 @@ func Open(path string) (*DB, error) {
 			return nil, fmt.Errorf("backfill unit_communities: %w", err)
 		}
 	}
-	return &DB{DB: db, Path: path}, nil
+	returnDB := &DB{DB: db, Path: path}
+	if err := returnDB.migrateShortIDs(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("short ids: %w", err)
+	}
+	return returnDB, nil
 }
 
 // Source looks up or creates a source row and returns its id and stat.
@@ -220,16 +227,19 @@ func (d *DB) UnitHashes(sourceID int64) (map[string][2]string, error) {
 
 // UpsertUnit inserts or replaces a unit identified by (source, key); returns its id.
 func (d *DB) UpsertUnit(u Unit) (int64, error) {
+	if err := d.prepareSID(&u); err != nil {
+		return 0, err
+	}
 	active := 0
 	if u.Active {
 		active = 1
 	}
-	_, err := d.Exec(`INSERT INTO units(source_id, key, content_hash, ident, kind, title, body, category, tags, scope, active, updated_ns)
-	  VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-	  ON CONFLICT(source_id, key) DO UPDATE SET content_hash=excluded.content_hash, ident=excluded.ident, kind=excluded.kind,
+	_, err := d.Exec(`INSERT INTO units(sid, origin, source_id, key, content_hash, ident, kind, title, body, category, tags, scope, active, updated_ns)
+	  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	  ON CONFLICT(source_id, key) DO UPDATE SET sid=excluded.sid, origin=excluded.origin, content_hash=excluded.content_hash, ident=excluded.ident, kind=excluded.kind,
 	    title=excluded.title, body=excluded.body, category=excluded.category, tags=excluded.tags,
 	    scope=excluded.scope, active=excluded.active, updated_ns=excluded.updated_ns`,
-		u.SourceID, u.Key, u.ContentHash, u.Ident, u.Kind, u.Title, u.Body, u.Category,
+		u.SID, u.Origin, u.SourceID, u.Key, u.ContentHash, u.Ident, u.Kind, u.Title, u.Body, u.Category,
 		strings.Join(u.Tags, " "), u.Scope, active, u.Updated.UnixNano())
 	if err != nil {
 		return 0, err
@@ -261,11 +271,11 @@ func (d *DB) GetUnit(id int64) (Unit, error) {
 	var tags string
 	var active int
 	var upd int64
-	err := d.QueryRow(`SELECT id, source_id, key, content_hash, kind, title, body, category, tags, scope, active, updated_ns
-	  FROM units WHERE id=?`, id).Scan(&u.ID, &u.SourceID, &u.Key, &u.ContentHash, &u.Kind, &u.Title, &u.Body,
+	err := d.QueryRow(`SELECT id, sid, origin, source_id, key, content_hash, kind, title, body, category, tags, scope, active, updated_ns
+	  FROM units WHERE id=?`, id).Scan(&u.ID, &u.SID, &u.Origin, &u.SourceID, &u.Key, &u.ContentHash, &u.Kind, &u.Title, &u.Body,
 		&u.Category, &tags, &u.Scope, &active, &upd)
 	u.Tags = strings.Fields(tags)
-	u.Active = active == 1
+	u.Active = active == 1 && !d.IsSuppressed(u.SID)
 	u.Updated = time.Unix(0, upd)
 	return u, err
 }

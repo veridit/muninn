@@ -43,6 +43,33 @@ func TestIdentitySurvivesMoveAndClone(t *testing.T) {
 	}
 }
 
+func TestSharedOriginHasSameSIDOnAnotherMachine(t *testing.T) {
+	d := t.TempDir()
+	nativeA, nativeB := filepath.Join(d, "a.json"), filepath.Join(d, "b.json")
+	m, _, err := ingest.Remember(nativeA, "Shared indentation policy", "fact", "project:test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := "repo:shared-project/" + m.ID
+	if err := ingest.MarkSynced(nativeA, "project:test", func(string) string { return origin }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ingest.MergeImport(nativeB, []ingest.Imported{{Origin: origin, Content: m.Content, Scope: m.Scope, Active: true}}, false); err != nil {
+		t.Fatal(err)
+	}
+	a, err := ingest.LoadNative(nativeA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ingest.LoadNative(nativeB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a) != 1 || len(b) != 1 || a[0].SID != b[0].SID {
+		t.Fatalf("shared origin sid mismatch: %+v vs %+v", a, b)
+	}
+}
+
 func TestPlainFolderGetsPinnedID(t *testing.T) {
 	d := t.TempDir()
 	if _, err := Find(d, false); err != ErrNoProject {

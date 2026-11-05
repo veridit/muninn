@@ -10,11 +10,14 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/veridit/muninn/internal/shortid"
 )
 
 // NativeMemory is a memory muninn owns (created with `muninn remember`).
 type NativeMemory struct {
 	ID       string    `json:"id"`
+	SID      string    `json:"sid"`
 	Title    string    `json:"title,omitempty"`
 	Content  string    `json:"content"`
 	Category string    `json:"category,omitempty"`
@@ -49,11 +52,13 @@ func LoadNative(path string) ([]NativeMemory, error) {
 	if err := json.Unmarshal(b, &f); err != nil {
 		return nil, err
 	}
+	assignNativeSIDs(f.Memories)
 	return f.Memories, nil
 }
 
 // SaveNative writes the store atomically (temp file + rename).
 func SaveNative(path string, mems []NativeMemory) error {
+	assignNativeSIDs(mems)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -67,6 +72,36 @@ func SaveNative(path string, mems []NativeMemory) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func assignNativeSIDs(mems []NativeMemory) {
+	used := map[string]string{}
+	for i := range mems {
+		m := &mems[i]
+		full := shortid.Full(shortid.Identity(m.ID, m.Origin))
+		if len(m.SID) < 6 || !strings.HasPrefix(full, m.SID) {
+			m.SID = ""
+		}
+		if m.SID != "" {
+			used[m.SID] = shortid.Identity(m.ID, m.Origin)
+		}
+	}
+	for i := range mems {
+		m := &mems[i]
+		if m.SID != "" {
+			continue
+		}
+		identity := shortid.Identity(m.ID, m.Origin)
+		full := shortid.Full(identity)
+		for n := 6; n <= len(full); n++ {
+			sid := full[:n]
+			if other, ok := used[sid]; !ok || other == identity {
+				m.SID = sid
+				used[sid] = identity
+				break
+			}
+		}
+	}
 }
 
 func newID() string {
@@ -101,6 +136,8 @@ func Remember(path, content, category, scope string, tags []string) (NativeMemor
 	m := NativeMemory{ID: newID(), Content: content, Category: category, Tags: tags, Scope: scope,
 		Active: true, Strength: 1, Created: now, Updated: now}
 	mems = append(mems, m)
+	assignNativeSIDs(mems)
+	m = mems[len(mems)-1]
 	return m, false, SaveNative(path, mems)
 }
 
@@ -111,7 +148,7 @@ func Forget(path, id string) (bool, error) {
 		return false, err
 	}
 	for i := range mems {
-		if mems[i].ID == id && mems[i].Active {
+		if (mems[i].ID == id || mems[i].SID == id) && mems[i].Active {
 			mems[i].Active = false
 			mems[i].Updated = time.Now().UTC()
 			return true, SaveNative(path, mems)
