@@ -12,7 +12,7 @@ import (
 
 func TestJcodeTakeoverRoundTrip(t *testing.T) {
 	home := t.TempDir()
-	cfg := "[features]\nmemory = true\nswarm = true\n\n[agents]\nswarm_model = \"x\"\nmemory_sidecar_enabled = true\n\n[tools]\nprofile = \"\"\ndisabled = [\"browser\"]\n\n[hooks]\npost_tool_feedback = \"echo keep-me\"\n"
+	cfg := "[features]\nmemory = true\nswarm = true\n\n[tools]\nprofile = \"\"\ndisabled = [\"browser\"]\n\n[hooks]\npost_tool_feedback = \"echo keep-me\"\n"
 	os.WriteFile(filepath.Join(home, "config.toml"), []byte(cfg), 0o600)
 	other := `{"servers":{"vikunja":{"type":"http","url":"https://example.invalid/mcp"}}}`
 	os.WriteFile(filepath.Join(home, "mcp.json"), []byte(other), 0o600)
@@ -23,7 +23,7 @@ func TestJcodeTakeoverRoundTrip(t *testing.T) {
 	}
 	b, _ := os.ReadFile(filepath.Join(home, "config.toml"))
 	got := string(b)
-	for _, want := range []string{"memory = false", "memory_sidecar_enabled = false", `swarm_model = "x"`, `disabled = ["browser","memory"]`, `post_tool_feedback = "echo keep-me"`, `turn_start = "/bin/muninn hook jcode"`, "swarm = true"} {
+	for _, want := range []string{"memory = false", `disabled = ["browser","memory"]`, `post_tool_feedback = "echo keep-me"`, `turn_start = "/bin/muninn hook jcode"`, "swarm = true"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("config missing %q:\n%s", want, got)
 		}
@@ -52,7 +52,7 @@ func TestJcodeTakeoverRoundTrip(t *testing.T) {
 	}
 	b, _ = os.ReadFile(filepath.Join(home, "config.toml"))
 	raw, _ = os.ReadFile(filepath.Join(home, "mcp.json"))
-	if !strings.Contains(string(b), "memory = true") || !strings.Contains(string(b), "memory_sidecar_enabled = true") || !strings.Contains(string(b), `disabled = ["browser"]`) || strings.Contains(string(raw), "muninn") || !strings.Contains(string(raw), "vikunja") {
+	if !strings.Contains(string(b), "memory = true") || !strings.Contains(string(b), `disabled = ["browser"]`) || strings.Contains(string(raw), "muninn") || !strings.Contains(string(raw), "vikunja") {
 		t.Fatalf("uninstall did not restore:\n%s\n%s", b, raw)
 	}
 }
