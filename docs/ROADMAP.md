@@ -17,11 +17,15 @@ was imported from.
 - `forget`, MCP and the web UI accept the short id and the old long ids.
 - Recall lines become `- [2026-11-02 k7m2qx] ...`.
 
-## Project memories on the shared branch
+## Project memories on their own branch
 
-`muninn sync` moves from `.muninn/memories.jsonl` on main to `memories/` in the
-`.huginn/` worktree branch, so memories sync with tasks and never add commits
-to main. See ~/Projects/huginn/DESIGN.md D4.
+`muninn sync` moves from `.muninn/memories.jsonl` on main to its own orphan
+branch `muninn`, checked out as the worktree `.muninn/` (excluded from main via
+`.git/info/exclude`). Tasks get their own `huginn` branch: separate things stay
+separate (user, 2026-11-05 15:47). Migration: one commit removes the tracked
+`.muninn/` from main, then the same file lands on the `muninn` branch. The
+git-branch code is one shared package used by both tools. See
+~/Projects/huginn/DESIGN.md D6.
 
 ## Compaction
 
