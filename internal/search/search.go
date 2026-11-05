@@ -413,7 +413,20 @@ func (s *Searcher) semantic(ctx context.Context, q []float32, o Options, out map
 
 // Related returns a unit's stored nearest neighbours.
 func (s *Searcher) Related(ctx context.Context, unitID int64, limit int) ([]Result, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT nbr_id, sim FROM neighbors WHERE unit_id=? ORDER BY sim DESC LIMIT ?`, unitID, limit)
+	return s.RelatedIn(ctx, unitID, limit, nil)
+}
+
+// RelatedIn is Related restricted to scopes (nil = all). A unit outside the
+// scopes yields nothing, so an id cannot be used to probe another client's
+// memories.
+func (s *Searcher) RelatedIn(ctx context.Context, unitID int64, limit int, scopes []string) ([]Result, error) {
+	if len(scopes) > 0 {
+		u, err := s.DB.GetUnit(unitID)
+		if err != nil || !allowed(u.Scope, scopes) {
+			return nil, nil
+		}
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT nbr_id, sim FROM neighbors WHERE unit_id=? ORDER BY sim DESC`, unitID)
 	if err != nil {
 		return nil, err
 	}
@@ -431,10 +444,13 @@ func (s *Searcher) Related(ctx context.Context, unitID int64, limit int) ([]Resu
 	var out []Result
 	for _, x := range list {
 		u, err := s.DB.GetUnit(x.id)
-		if err != nil || !u.Active {
+		if err != nil || !u.Active || !allowed(u.Scope, scopes) {
 			continue
 		}
 		out = append(out, Result{Unit: u, Semantic: x.sim, Total: x.sim})
+		if len(out) >= limit {
+			break
+		}
 	}
 	return out, nil
 }

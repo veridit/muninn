@@ -45,7 +45,8 @@ for inst in alpha beta; do
   JCODE_HOME="$h" JCODE_HOOK_SESSION_ID=s1 "$m" hook jcode
   got=$(cat "$h/injected")
   other=$([ $inst = alpha ] && echo Beta || echo Alpha)
-  if grep -q "^$h$" <<<"$got" && grep -qi "^- ${inst}" <<<"$got" && ! grep -q "$other" <<<"$got"; then
+  # recall lines are "- [<date> <id>] text" or "- [<id>] text"
+  if grep -q "^$h$" <<<"$got" && grep -qiE "^- (\[[^]]*\] )?${inst} deploys" <<<"$got" && ! grep -q "$other deploys" <<<"$got"; then
     echo "$inst: injected own memory only: ok"
   else
     echo "$inst: FAIL"; echo "$got"; fail=1
@@ -66,4 +67,29 @@ cp "$root/alpha/.jcode/sessions/s2.json" "$root/beta/.jcode/sessions/s2.json"
 rm -f "$root/beta/.jcode/injected"
 JCODE_HOME="$root/beta/.jcode" JCODE_HOOK_SESSION_ID=s2 "$m" hook jcode
 if ! grep -qs "docs/RELEASE.md" "$root/beta/.jcode/injected"; then echo "beta outside repo: project memory not recalled: ok"; else echo "beta: FAIL (leak)"; fail=1; fi
+
+echo "== MCP server as installed in mcp.json (no JCODE_HOME in env)"
+for inst in alpha beta; do
+  other=$([ $inst = alpha ] && echo Beta || echo Alpha)
+  got=$(env -u JCODE_HOME python3 - "$root/$inst/.jcode/mcp.json" <<'PY'
+import json, subprocess, sys
+srv = json.load(open(sys.argv[1]))["servers"]["muninn"]
+p = subprocess.Popen([srv["command"], *srv["args"]], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+def rpc(i, method, params):
+    p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "method": method, "params": params}) + "\n"); p.stdin.flush()
+    while True:
+        m = json.loads(p.stdout.readline())
+        if m.get("id") == i: return m
+rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "e2e", "version": "0"}})
+p.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"); p.stdin.flush()
+r = rpc(2, "tools/call", {"name": "memory_search", "arguments": {"query": "payment service rollout", "limit": 10}})
+print(r["result"]["content"][0]["text"]); p.stdin.close(); p.wait()
+PY
+)
+  if grep -qi "\"${inst} deploys" <<<"$got" && ! grep -q "$other deploys" <<<"$got"; then
+    echo "$inst mcp: own memories only: ok"
+  else
+    echo "$inst mcp: FAIL"; echo "$got"; fail=1
+  fi
+done
 exit $fail

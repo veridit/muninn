@@ -67,14 +67,33 @@ Recalled memories arrive in blocks marked [muninn recall], tagged [date id]. A m
 
 Save with memory_remember when the user states something that will matter in future sessions: a rule ("from now on..."), a preference, a decision, or a correction. One fact per memory, in the narrowest scope that fits. Never store secrets.`
 
+// Options restrict what one MCP session may see and change. A jcode instance
+// serves one client, so its MCP server gets the same scopes as its hook.
+type Options struct {
+	Scopes       []string // readable scopes; nil = unrestricted
+	DefaultScope string   // scope for memory_remember without one; "" = global
+}
+
+func (o Options) allowed(scope string) bool {
+	if len(o.Scopes) == 0 {
+		return true
+	}
+	for _, s := range o.Scopes {
+		if p, ok := strings.CutSuffix(s, "*"); ok && strings.HasPrefix(scope, p) || s == scope {
+			return true
+		}
+	}
+	return false
+}
+
 // New builds the MCP server over an opened app.
-func New(a *app.App, version string) *mcp.Server {
+func New(a *app.App, version string, opt Options) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "muninn", Version: version}, &mcp.ServerOptions{Instructions: Instructions})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_search", Description: "Search local memories (keyword + concept community + semantic). Use before answering questions about the user, their projects or past decisions."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, hitsOut, error) {
 			o := a.RecallOptions()
-			o.MinScore, o.Limit = 0, in.Limit
+			o.MinScore, o.Limit, o.Scopes = 0, in.Limit, opt.Scopes
 			if o.Limit <= 0 {
 				o.Limit = 8
 			}
@@ -98,6 +117,12 @@ func New(a *app.App, version string) *mcp.Server {
 			if in.Category == "" {
 				in.Category = "fact"
 			}
+			if in.Scope == "" {
+				in.Scope = opt.DefaultScope
+			}
+			if in.Scope != "" && !opt.allowed(in.Scope) {
+				return nil, idOut{}, fmt.Errorf("scope %q is not available in this session", in.Scope)
+			}
 			m, re, err := ingest.Remember(app.NativePath(), in.Content, in.Category, in.Scope, in.Tags)
 			if err != nil {
 				return nil, idOut{}, err
@@ -111,6 +136,21 @@ func New(a *app.App, version string) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_forget", Description: "Retire a wrong or outdated muninn memory by its id (mem_... or imp_..., as shown in [muninn recall]). Follow with memory_remember for the corrected fact."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in forgetIn) (*mcp.CallToolResult, idOut, error) {
+			if len(opt.Scopes) > 0 {
+				mems, err := ingest.LoadNative(app.NativePath())
+				if err != nil {
+					return nil, idOut{}, err
+				}
+				visible := false
+				for _, m := range mems {
+					if m.ID == in.ID && opt.allowed(m.Scope) {
+						visible = true
+					}
+				}
+				if !visible {
+					return nil, idOut{}, fmt.Errorf("no active muninn memory %q", in.ID)
+				}
+			}
 			ok, err := ingest.Forget(app.NativePath(), in.ID)
 			if err != nil {
 				return nil, idOut{}, err
@@ -129,7 +169,7 @@ func New(a *app.App, version string) *mcp.Server {
 			if in.Limit <= 0 {
 				in.Limit = 8
 			}
-			res, err := a.Searcher.Related(ctx, in.UnitID, in.Limit)
+			res, err := a.Searcher.RelatedIn(ctx, in.UnitID, in.Limit, opt.Scopes)
 			if err != nil {
 				return nil, hitsOut{}, err
 			}
@@ -150,7 +190,7 @@ func New(a *app.App, version string) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
 			Message string `json:"message"`
 		}) (*mcp.CallToolResult, recall.Response, error) {
-			resp, err := a.Recall.Recall(ctx, recall.Request{Message: in.Message, Harness: "mcp"})
+			resp, err := a.Recall.Recall(ctx, recall.Request{Message: in.Message, Harness: "mcp", Scopes: opt.Scopes})
 			if err != nil {
 				return nil, recall.Response{}, err
 			}
@@ -164,6 +204,6 @@ func New(a *app.App, version string) *mcp.Server {
 }
 
 // RunStdio serves MCP over stdin/stdout until the client disconnects.
-func RunStdio(ctx context.Context, a *app.App, version string) error {
-	return New(a, version).Run(ctx, &mcp.StdioTransport{})
+func RunStdio(ctx context.Context, a *app.App, version string, opt Options) error {
+	return New(a, version, opt).Run(ctx, &mcp.StdioTransport{})
 }

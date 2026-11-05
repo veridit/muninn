@@ -58,7 +58,8 @@ func serveCmd() *cobra.Command {
 }
 
 func mcpCmd() *cobra.Command {
-	return &cobra.Command{Use: "mcp", Short: "Serve MCP over stdio (memory_search, memory_remember, ...)",
+	var jcodeHome string
+	c := &cobra.Command{Use: "mcp", Short: "Serve MCP over stdio (memory_search, memory_remember, ...)",
 		RunE: func(*cobra.Command, []string) error {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -66,9 +67,32 @@ func mcpCmd() *cobra.Command {
 				if _, err := a.Reindex(ctx); err != nil {
 					fmt.Fprintln(os.Stderr, "muninn: reindex:", err)
 				}
-				return mcpserver.RunStdio(ctx, a, version)
+				return mcpserver.RunStdio(ctx, a, version, mcpOptions(a, jcodeHome))
 			})
 		}}
+	c.Flags().StringVar(&jcodeHome, "jcode-home", "", "serve one jcode instance: same scopes as its recall hook (default $JCODE_HOME when set)")
+	return c
+}
+
+// mcpOptions gives a jcode instance's MCP server the same isolation as its
+// hook: its own memories, muninn global ones and the current project. New
+// memories default to the instance scope, so a client instance never writes
+// into the shared global scope by accident. Without an instance (Claude
+// Code, Codex, a bare `muninn mcp`) nothing is restricted, as before.
+func mcpOptions(a *app.App, jcodeHome string) mcpserver.Options {
+	if jcodeHome == "" {
+		jcodeHome = os.Getenv("JCODE_HOME")
+	}
+	if jcodeHome == "" {
+		return mcpserver.Options{}
+	}
+	inst := harness.InstanceForHome(a.JcodeInstances(), jcodeHome)
+	cwd, _ := os.Getwd()
+	opt := mcpserver.Options{Scopes: withProject(jcodeRecallScopes(inst, a.Cfg.JcodeShareGlobal), cwd)}
+	if inst.Name != "global" {
+		opt.DefaultScope = inst.Scope()
+	}
+	return opt
 }
 
 func tuiCmd() *cobra.Command {

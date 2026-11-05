@@ -2,8 +2,10 @@ package harness
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -34,7 +36,12 @@ func TestJcodeTakeoverRoundTrip(t *testing.T) {
 	if m.Servers["vikunja"]["url"] != "https://example.invalid/mcp" || m.Servers["muninn"]["command"] != "/bin/muninn" {
 		t.Fatalf("mcp.json: %s", raw)
 	}
-	if fi, _ := os.Stat(filepath.Join(home, "mcp.json")); fi.Mode().Perm() != 0o600 {
+	// The instance is pinned in args, so MCP is scoped even without JCODE_HOME.
+	if args := fmt.Sprint(m.Servers["muninn"]["args"]); args != fmt.Sprintf("[mcp --jcode-home %s]", home) {
+		t.Fatalf("mcp args = %s", args)
+	}
+	// Windows has no Unix permission bits (Go reports 0666 for every file).
+	if fi, _ := os.Stat(filepath.Join(home, "mcp.json")); runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("mcp.json mode changed to %v", fi.Mode().Perm())
 	}
 	if r, _ := InstallJcodeHome(home, "jcode[t]", "/bin/muninn", true, false); r.Changed {

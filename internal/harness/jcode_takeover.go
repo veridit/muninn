@@ -111,7 +111,7 @@ func editJcodeMemoryTakeover(text string, install bool) (string, bool, error) {
 
 // editJcodeMCP adds (or removes) the muninn MCP server in a jcode mcp.json,
 // keeping every other server and field untouched.
-func editJcodeMCP(raw []byte, bin string, install bool) ([]byte, bool, error) {
+func editJcodeMCP(raw []byte, bin, jcodeHome string, install bool) ([]byte, bool, error) {
 	doc := map[string]json.RawMessage{}
 	if len(strings.TrimSpace(string(raw))) > 0 {
 		if err := json.Unmarshal(raw, &doc); err != nil {
@@ -124,7 +124,13 @@ func editJcodeMCP(raw []byte, bin string, install bool) ([]byte, bool, error) {
 			return raw, false, fmt.Errorf("cannot parse mcp.json servers: %w", err)
 		}
 	}
-	want, _ := json.Marshal(map[string]any{"command": bin, "args": []string{"mcp"}, "env": map[string]string{}})
+	// --jcode-home pins the instance, so the MCP server is scoped like the
+	// hook even if jcode does not pass JCODE_HOME to MCP children.
+	args := []string{"mcp"}
+	if jcodeHome != "" {
+		args = append(args, "--jcode-home", jcodeHome)
+	}
+	want, _ := json.Marshal(map[string]any{"command": bin, "args": args, "env": map[string]string{}})
 	cur, has := servers["muninn"]
 	switch {
 	case install && has && jsonEqual(cur, want):
@@ -158,7 +164,7 @@ func takeOverJcodeMemory(jcodeHome, bin string, install, dry bool) ([]string, er
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return notes, err
 	}
-	out, changed, err := editJcodeMCP(raw, bin, install)
+	out, changed, err := editJcodeMCP(raw, bin, jcodeHome, install)
 	if err != nil {
 		return notes, err
 	}
