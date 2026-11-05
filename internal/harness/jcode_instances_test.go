@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+func TestExplicitGlobalHomeKeepsCanonicalScope(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := InstanceForHome(nil, filepath.Join(home, ".jcode"))
+	if i.Name != "global" || i.Scope() != "jcode@global" {
+		t.Fatalf("explicit global became %+v", i)
+	}
+}
+
 func TestParseZshInstances(t *testing.T) {
 	home := t.TempDir()
 	rc := filepath.Join(home, ".zshrc")
