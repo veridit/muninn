@@ -47,7 +47,11 @@ type resultsMsg struct {
 
 // Run starts the TUI.
 func Run(a *app.App, bindings ...app.Binding) error {
-	_, err := tea.NewProgram(newModel(a, bindings...), tea.WithAltScreen()).Run()
+	m := newModel(a, bindings...)
+	if m.binding.Err != nil {
+		return m.binding.Err
+	}
+	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
 
@@ -69,6 +73,9 @@ func (m model) Init() tea.Cmd { return textinput.Blink }
 func (m model) run() tea.Cmd {
 	q, md := m.input.Value(), m.mode
 	return func() tea.Msg {
+		if m.binding.Err != nil {
+			return resultsMsg{err: m.binding.Err}
+		}
 		t0 := time.Now()
 		ctx := context.Background()
 		if strings.TrimSpace(q) == "" {

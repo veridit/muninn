@@ -12,6 +12,9 @@ import (
 // Rescope is deliberately CLI-admin-only. No hook, MCP, TUI or HTTP route calls it.
 // Cross-client migration preserves the stable identity and upstream mapping.
 func (b Binding) Rescope(ctx context.Context, a *App, ref, target string, crossClient bool) (string, error) {
+	if b.Err != nil {
+		return "", b.Err
+	}
 	if target == "" || strings.ContainsAny(target, "*!\r\n") {
 		return "", fmt.Errorf("--to requires a literal scope")
 	}
@@ -71,6 +74,9 @@ func (b Binding) Rescope(ctx context.Context, a *App, ref, target string, crossC
 
 // MergeImport prevents imports from becoming a second boundary-crossing path.
 func (b Binding) MergeImport(path string, items []ingest.Imported, dry bool) (ingest.ImportStats, error) {
+	if b.Err != nil {
+		return ingest.ImportStats{}, b.Err
+	}
 	mems, err := ingest.LoadNative(path)
 	if err != nil {
 		return ingest.ImportStats{}, err

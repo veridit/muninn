@@ -34,7 +34,7 @@ func New(t *testing.T) *Fixture {
 	cfg.Embedder = "none"
 	cfg.MaxResults = 30
 	cfg.RelativeFloor = 0
-	for _, name := range []string{"alpha", "beta"} {
+	for _, name := range []string{"alpha", "beta", "global"} {
 		h := filepath.Join(root, name, ".jcode")
 		if err := os.MkdirAll(h, 0700); err != nil {
 			t.Fatal(err)
@@ -56,7 +56,7 @@ func New(t *testing.T) *Fixture {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(root, "client", ".muninn-client"), []byte("name = \"acme\"\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "client", ".muninn", "client"), []byte("acme\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "client", ".muninn", "project"), []byte("client-project\n"), 0600); err != nil {
@@ -162,4 +162,13 @@ func (f *Fixture) Read(t *testing.T, binding, out string) {
 func Pass(t *testing.T, surface, binding string) {
 	t.Helper()
 	t.Log(fmt.Sprintf("SCOPE MATRIX PASS surface=%s binding=%s", surface, binding))
+}
+
+func (f *Fixture) Invalidate(t *testing.T) {
+	t.Helper()
+	f.Bind(t, "client")
+	if err := os.WriteFile(filepath.Join(f.Root, "client", ".muninn", "client"), []byte("\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(f.ClientCwd)
 }

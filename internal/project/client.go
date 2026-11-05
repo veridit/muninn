@@ -6,15 +6,15 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
 var clientName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
-// ClientRoot walks cwd's physical ancestors for the nearest .muninn-client.
-// The deliberately small TOML subset is one name = "identifier" assignment,
-// with blank lines and full-line comments permitted. Invalid markers fail closed.
+// ClientRoot walks cwd's physical ancestors for the nearest .muninn/client.
+// The file holds one case-sensitive identifier, surrounded by optional whitespace.
+// A .muninn directory without a client file does not stop the walk. Invalid or
+// unreadable markers fail closed instead of falling back to personal memory.
 func ClientRoot(cwd string) (name, root string, err error) {
 	if cwd == "" {
 		cwd, err = os.Getwd()
@@ -30,28 +30,17 @@ func ClientRoot(cwd string) (name, root string, err error) {
 		cwd = physical
 	}
 	for d := cwd; ; d = filepath.Dir(d) {
-		data, e := os.ReadFile(filepath.Join(d, ".muninn-client"))
+		path := filepath.Join(d, ".muninn", "client")
+		data, e := os.ReadFile(path)
 		if e == nil {
-			var assignment string
-			for _, line := range strings.Split(string(data), "\n") {
-				line = strings.TrimSpace(line)
-				if line == "" || strings.HasPrefix(line, "#") {
-					continue
-				}
-				if assignment != "" {
-					return "", d, fmt.Errorf("invalid .muninn-client")
-				}
-				assignment = line
-			}
-			k, v, ok := strings.Cut(assignment, "=")
-			value, e := strconv.Unquote(strings.TrimSpace(v))
-			if !ok || strings.TrimSpace(k) != "name" || e != nil || !clientName.MatchString(value) {
-				return "", d, fmt.Errorf("invalid .muninn-client: expected name = \"identifier\"")
+			value := strings.TrimSpace(string(data))
+			if !clientName.MatchString(value) {
+				return "", d, fmt.Errorf("%s: invalid client name (expected letters, digits, _ or -, starting with a letter or digit)", path)
 			}
 			return value, d, nil
 		}
 		if !errors.Is(e, os.ErrNotExist) {
-			return "", d, e
+			return "", d, fmt.Errorf("%s: %w", path, e)
 		}
 		if filepath.Dir(d) == d {
 			break

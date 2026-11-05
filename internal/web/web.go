@@ -75,6 +75,9 @@ func (s *Server) Handler() http.Handler {
 		cwd, _ := os.Getwd()
 		b = s.App.Bound("", cwd)
 	}
+	if b.Err != nil {
+		return localOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fail(w, http.StatusUnprocessableEntity, b.Err) }))
+	}
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))

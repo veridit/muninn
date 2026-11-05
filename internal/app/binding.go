@@ -23,6 +23,7 @@ type Binding struct {
 	DefaultScope string
 	Name         string
 	Client       string
+	Err          error
 	writeScopes  []string
 }
 
@@ -32,7 +33,7 @@ type Binding struct {
 func (a *App) Bound(jcodeHome, cwd string) Binding {
 	client, _, markerErr := project.ClientRoot(cwd)
 	if markerErr != nil {
-		return Binding{Name: "client (invalid marker)", Scopes: []string{"!*"}, writeScopes: []string{"!*"}}
+		return Binding{Name: "client (invalid marker)", Err: markerErr, Scopes: []string{"!*"}, writeScopes: []string{"!*"}}
 	}
 	if client != "" {
 		scope := "client:" + client
@@ -69,16 +70,23 @@ func (a *App) Bound(jcodeHome, cwd string) Binding {
 		rows, err := a.DB.Query(`SELECT DISTINCT scope FROM units WHERE scope LIKE 'jcode@%'`)
 		if err != nil {
 			b.Scopes = []string{"!*"}
+			b.Err = err
 		}
 		if err == nil {
 			for rows.Next() {
 				var s string
-				if rows.Scan(&s) == nil {
+				if err := rows.Scan(&s); err != nil {
+					b.Err = err
+					break
+				} else {
 					s, _, _ = strings.Cut(s, ":")
 					if s != "jcode@global" {
 						names[s] = true
 					}
 				}
+			}
+			if err := rows.Err(); err != nil {
+				b.Err = err
 			}
 			rows.Close()
 		}
@@ -94,7 +102,7 @@ func (a *App) Bound(jcodeHome, cwd string) Binding {
 
 // View explicitly widens an owner view. It never widens writes.
 func (b Binding) View(all bool, scopes []string) Binding {
-	if b.Client != "" || b.Name == "client (invalid marker)" {
+	if b.Client != "" || b.Err != nil {
 		return b
 	}
 	if all {
@@ -109,8 +117,11 @@ func (b Binding) View(all bool, scopes []string) Binding {
 	b.Scopes = append(b.Scopes, "!client:*")
 	return b
 }
-func (b Binding) Allows(scope string) bool { return search.Allowed(scope, b.Scopes) }
+func (b Binding) Allows(scope string) bool { return b.Err == nil && search.Allowed(scope, b.Scopes) }
 func (b Binding) WriteScope(scope string) (string, error) {
+	if b.Err != nil {
+		return "", b.Err
+	}
 	if scope == "" {
 		scope = b.DefaultScope
 	}
@@ -128,6 +139,9 @@ func (b Binding) WriteScope(scope string) (string, error) {
 }
 
 func (b Binding) ResolveAll(a *App, ref string) ([]store.Unit, error) {
+	if b.Err != nil {
+		return nil, b.Err
+	}
 	units, err := a.DB.ResolveAll(ref)
 	if err != nil {
 		return nil, fmt.Errorf("no visible memory")
@@ -154,6 +168,9 @@ func (b Binding) Resolve(a *App, ref string) (store.Unit, error) {
 	return units[0], nil
 }
 func (b Binding) Forget(ctx context.Context, a *App, ref string) (ForgetResult, error) {
+	if b.Err != nil {
+		return ForgetResult{}, b.Err
+	}
 	// Check the underlying write policy even for an explicitly widened view.
 	units, err := a.DB.ResolveAll(ref)
 	if err != nil {

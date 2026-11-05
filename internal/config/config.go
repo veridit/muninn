@@ -28,8 +28,8 @@ type Config struct {
 	JcodeHomes []string `json:"jcode_homes,omitempty"`
 	// JcodeDiscover turns off ~/.zshrc instance discovery when false.
 	JcodeDiscover *bool `json:"jcode_discover,omitempty"`
-	// JcodeShareGlobal lets per-project instances also recall memories of the
-	// global ~/.jcode instance. Off by default: instances exist for isolation.
+	// JcodeShareGlobal is retained for config compatibility only. Deprecated:
+	// unified binding never shares the personal jcode instance into clients.
 	JcodeShareGlobal bool     `json:"jcode_share_global,omitempty"`
 	NotesRoots       []string `json:"notes_roots"`
 	// Recall tuning.

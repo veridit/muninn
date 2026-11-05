@@ -30,6 +30,9 @@ func Stats(ctx context.Context, a *App, bindings ...Binding) (IndexStats, error)
 	if len(bindings) > 0 {
 		b = bindings[0]
 	}
+	if b.Err != nil {
+		return IndexStats{}, b.Err
+	}
 	s := IndexStats{ByKind: map[string]int{}, ByScope: map[string]int{}, Binding: b.Name}
 	where, args := search.ScopeSQL("u.scope", b.Scopes)
 	cte := `WITH visible AS (SELECT u.* FROM units u WHERE (` + where + `)

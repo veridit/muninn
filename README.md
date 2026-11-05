@@ -189,10 +189,16 @@ muninn indexes each one separately and keeps them apart:
 
 - Each instance's memories get the scope `jcode@<instance>` (instance-wide) or
   `jcode@<instance>:<project>`.
-- A hook running inside an instance recalls only that instance's memories plus
-  muninn's own `global` memories. Nothing crosses from one client to another.
-  Set `jcode_share_global: true` to also share the default `~/.jcode` memories.
+- Every surface uses the same binding: hooks, shell CLI, MCP, TUI and web.
+  A non-global instance sees its own scopes, shared `global`, and the current
+  project's scope. New memories default to `jcode@<instance>`. Another
+  instance's memories cannot be shown, related, forgotten or overwritten.
+- Without `JCODE_HOME`, or with the default `~/.jcode`, the binding is global:
+  personal, named and `engram:*` memories remain visible, but every known
+  non-global jcode instance is excluded. Indexed instance scopes are also
+  excluded when their source installation is temporarily absent.
 - The hook uses the instance's own `bin/jcode` and `runtime/`.
+  The old `jcode_share_global` setting no longer widens client bindings.
 
 Instances are found in `~/.jcode`, in a zsh `typeset -gA JCODE_INSTANCES=(name root ...)`
 (read as text, never executed), and in `jcode_homes` in the config.
@@ -201,8 +207,56 @@ Instances are found in `~/.jcode`, in a zsh `typeset -gA JCODE_INSTANCES=(name r
 muninn jcode instances                     # name, memories, hook installed?, JCODE_HOME
 muninn install jcode --all-instances --dry-run
 muninn install jcode --jcode-home ~/client/.jcode
-muninn search --scope 'jcode@client*' "deploy"
+muninn search --scope 'jcode@client:*' "deploy" # explicit owner read view
+muninn search --all "deploy"                 # all non-client-root memories
+muninn tui --jcode-home ~/client/.jcode       # status shows active binding
+muninn serve --all                          # explicit owner web view
 ```
+
+CLI memory commands accept `--jcode-home` (otherwise `$JCODE_HOME`, then
+`~/.jcode`), and owner read views accept `--all` or repeatable `--scope`.
+These view flags never authorize writes into another instance. Use
+`--scope global` explicitly when remembering a genuinely shared note.
+TUI and web status lines display the active binding. MCP and hooks cannot
+widen their view. Unknown or out-of-binding ids return `no visible memory`.
+Stats, related results and injection history follow the same binding.
+
+### Strict client roots
+
+To mark a directory and all its descendants as a client workspace, create
+`.muninn/client` containing a single client name, for example:
+
+```text
+acme
+```
+
+Names are case-sensitive letters, digits, `_` or `-`, starting with a letter
+or digit. Surrounding whitespace is ignored. Lookup walks physical ancestor
+directories to the filesystem root, with the nearest marker winning. An
+ordinary `.muninn/` holding only `project` or `memories.jsonl` does not stop
+the walk. Empty, invalid or unreadable markers produce a lint-style error
+and fail closed: no memory reads or writes, not a fallback to global.
+
+The marker wins over `JCODE_HOME` and `--jcode-home`. Within `acme`, reads
+are strictly `client:acme` and `client:acme:*`, with no shared global,
+personal or jcode memories. Writes default to `client:acme` and other
+clients or personal scopes are refused. Project notes beneath that root use
+`client:acme:<project-id>`. Every other binding excludes `client:*`.
+Neither `--all` nor `--scope` can cross a client-root boundary, including in
+TUI and web views. Imports and project sync respect the write boundary.
+
+Only an explicit admin CLI operation can move an owned memory across it:
+
+```sh
+muninn rescope k7m2qx --to client:acme --cross-client
+muninn rescope k7m2qx --to personal --cross-client
+```
+
+Rescoping retains the sid and upstream identity. It requires an owned native
+memory (import an upstream harness note first), never edits harness files,
+and is not exposed over MCP, hooks, TUI or HTTP. These are memory visibility
+rules, not an operating-system sandbox against code that opens the local
+memory files directly.
 
 ### Sources
 
@@ -225,10 +279,12 @@ git add .muninn && git commit -m "Share project memories"
 
 `.muninn/memories.jsonl` holds one memory per line, sorted by id, so diffs
 and merges stay readable. `sync` is idempotent in both directions. Only
-memories in the project scope are written: personal, global and client
-memories never leave your machine, and anything that looks like a credential
-is withheld. A teammate pulls and runs `muninn sync`, and the memories are
-recalled in every harness working inside that repository.
+memories in that project's scope are written: other personal, global, client
+and project scopes are never exported, and anything that looks like a credential
+is withheld. Inside a client root only that client's project notes are shared.
+Client project sync identities include the client name, so a personal clone
+cannot alias them. A teammate pulls and runs `muninn sync`, and the memories are
+recalled in every harness bound to that repository.
 
 ### Importing
 
@@ -242,9 +298,14 @@ propagated.
 ```sh
 muninn import engram --dry-run                       # ~/.engram/engram.db, read-only
 muninn import engram --file engram-export.json       # or an `engram export` file
-muninn import engram --map statbus=jcode@statbus     # put a project into an instance's scope
-muninn import jcode --all-instances                  # keeps each instance's scope
+JCODE_HOME=~/statbus/.jcode muninn import engram --map statbus=jcode@statbus
+JCODE_HOME=~/statbus/.jcode muninn import jcode       # this instance's scope
 ```
+
+Imports use the active binding too. Run an import in the intended instance;
+`--jcode-home` source selection and `--all-instances` never bypass the write
+boundary. An import cannot overwrite a pre-existing identity in another
+binding.
 
 engram `personal` observations become `global`; project observations become
 `engram:<project>` unless mapped. Identical text indexed from two places

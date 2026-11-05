@@ -72,6 +72,10 @@ func withApp(fn func(ctx context.Context, a *app.App) error) error {
 		return err
 	}
 	defer a.Close()
+	cwd, _ := os.Getwd()
+	if b := a.Bound("", cwd); b.Err != nil {
+		return b.Err
+	}
 	return fn(ctx, a)
 }
 
@@ -426,7 +430,11 @@ func runHook(name string, budget time.Duration) error {
 		}
 		defer a.Close()
 		inst := harness.InstanceForHome(a.JcodeInstances(), jh)
-		scopes := a.Bound(jh, os.Getenv("JCODE_HOOK_CWD")).Scopes
+		binding := a.Bound(jh, os.Getenv("JCODE_HOOK_CWD"))
+		if binding.Err != nil {
+			return binding.Err
+		}
+		scopes := binding.Scopes
 		resp, err := hookRecallWith(ctx, a, name, sid, msg, scopes)
 		if err != nil || resp.Block == "" {
 			logHook("jcode[%s] %s: msg=%q hits=0 skipped=%q elapsed=%s", inst.Name, short(sid), recall.Truncate(msg, 60), resp.Skipped, resp.Elapsed)
@@ -458,7 +466,11 @@ func hookRecall(ctx context.Context, harnessName, session, msg, cwd string) (rec
 		return recall.Response{}, err
 	}
 	defer a.Close()
-	return hookRecallWith(ctx, a, harnessName, session, msg, a.Bound("", cwd).Scopes)
+	b := a.Bound("", cwd)
+	if b.Err != nil {
+		return recall.Response{}, b.Err
+	}
+	return hookRecallWith(ctx, a, harnessName, session, msg, b.Scopes)
 }
 
 func hookRecallWith(ctx context.Context, a *app.App, harnessName, session, msg string, scopes []string) (recall.Response, error) {

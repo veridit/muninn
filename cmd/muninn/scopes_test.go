@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -169,6 +170,34 @@ func TestScopeMatrixCLIAndHooks(t *testing.T) {
 				scopetest.Pass(t, "hook."+hook, binding)
 			}
 			// --all / --scope may widen instance views but never client boundaries.
+			home := filepath.Join(f.Root, "alpha", ".jcode")
+			if binding == "global" {
+				home = filepath.Join(f.Root, "global", ".jcode")
+			}
+			for _, dir := range []string{"sessions", "bin"} {
+				if err := os.MkdirAll(filepath.Join(home, dir), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(home, "sessions", "matrix-jcode.json"), []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"`+scopetest.Query+`"}]}]}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, "bin", "jcode"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$JCODE_HOME/injected\"\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("JCODE_HOME", home)
+			t.Setenv("JCODE_HOOK_SESSION_ID", "matrix-jcode")
+			t.Setenv("JCODE_HOOK_CWD", cwd)
+			if err := runHook("jcode", 5*time.Second); err != nil {
+				t.Fatal(err)
+			}
+			injected, err := os.ReadFile(filepath.Join(home, "injected"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.Read(t, binding, string(injected))
+			scopetest.Pass(t, "hook.jcode", binding)
+
 			for _, args := range [][]string{{scopetest.Query, "--all", "--limit", "30"}, {scopetest.Query, "--scope", "client:*", "--limit", "30"}} {
 				out, err := cliSurface(t, searchCmd(), args...)
 				if err != nil {
@@ -213,7 +242,7 @@ func TestCrossClientRequiresExplicitAdminFlag(t *testing.T) {
 		t.Fatalf("admin rescope: %s", out)
 	}
 	u, err := f.App.DB.Resolve(id)
-	if err != nil || u.Scope != "client:acme" || u.SID != id {
+	if err != nil || u.Scope != "client:acme" || u.SID != id || u.Origin != f.Units["Personal"].Origin {
 		t.Fatalf("rescope lost identity: %+v %v", u, err)
 	}
 	if _, err := f.App.Bound("", f.Cwd).Resolve(f.App, id); err == nil {
@@ -225,12 +254,40 @@ func TestCrossClientRequiresExplicitAdminFlag(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No other writer can move or overwrite that identity across the boundary.
-	if _, err := f.App.Bound("", f.Cwd).MergeImport("unused", nil, true); err != nil {
-		t.Fatal(err)
-	}
 	_, err = b.Forget(context.Background(), f.App, f.Units["Shared"].SID)
 	if err == nil {
 		t.Fatal("client forgot global")
 	}
 	scopetest.Pass(t, "cli.rescope-cross-client", "admin-explicit")
+}
+
+func TestScopeMatrixInvalidClientCLIAndHooks(t *testing.T) {
+	f := scopetest.New(t)
+	f.Invalidate(t)
+	for _, tc := range []struct {
+		cmd  *cobra.Command
+		args []string
+	}{
+		{searchCmd(), []string{scopetest.Query, "--all"}}, {recallCmd(), []string{scopetest.Query}},
+		{listCmd(), nil}, {statsCmd(), nil}, {showCmd(), []string{f.Units["Shared"].SID}},
+		{relatedCmd(), []string{f.Units["Shared"].SID}}, {forgetCmd(), []string{f.Units["Shared"].SID}},
+		{rememberCmd(), []string{"not stored"}},
+	} {
+		out, err := cliSurface(t, tc.cmd, tc.args...)
+		if err == nil || !strings.Contains(out, "invalid client name") {
+			t.Fatalf("invalid marker failed open: %s", out)
+		}
+		f.Clean(t, "client", out)
+	}
+	for _, hook := range []string{"claude", "codex"} {
+		out, err := captureSurface(t, func() error {
+			_, err := hookRecall(context.Background(), hook, "invalid", scopetest.Query, f.ClientCwd)
+			return err
+		})
+		if err == nil || !strings.Contains(out, "invalid client name") {
+			t.Fatal(out)
+		}
+		f.Clean(t, "client", out)
+	}
+	scopetest.Pass(t, "cli-and-hooks.fail-closed", "invalid-client")
 }

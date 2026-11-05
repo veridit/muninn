@@ -164,3 +164,17 @@ func TestScopeMatrixWeb(t *testing.T) {
 		})
 	}
 }
+
+func TestScopeMatrixInvalidClientWeb(t *testing.T) {
+	f := scopetest.New(t)
+	f.Invalidate(t)
+	h := (&Server{App: f.App, Mu: &sync.Mutex{}}).Handler()
+	for _, path := range []string{"/api/search?q=quartz", "/api/related?id=" + f.Units["Shared"].SID, "/api/stats", "/api/injections", "/api/recall", "/api/remember", "/api/forget"} {
+		out, status := matrixRequest(h, "GET", path, "")
+		if status != 422 || !strings.Contains(out, "invalid client name") {
+			t.Fatalf("%s failed open: %s", path, out)
+		}
+		f.Clean(t, "client", out)
+	}
+	scopetest.Pass(t, "web.fail-closed", "invalid-client")
+}

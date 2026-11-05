@@ -57,7 +57,7 @@ func TestBindingHomeAndClientPrecedence(t *testing.T) {
 		t.Fatalf("client project: %+v %v", p, err)
 	}
 	// No cross-process cache, and no fail-open behavior on an invalid marker.
-	if err := os.WriteFile(filepath.Join(f.Root, "client", ".muninn-client"), []byte("name = [broken\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(f.Root, "client", ".muninn", "client"), []byte("invalid/name\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	invalid := f.App.Bound("", f.ClientCwd)

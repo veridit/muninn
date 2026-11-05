@@ -20,6 +20,26 @@ Decided by the user on 2026-11-05. Completed items are marked below.
 - [x] Recall lines are `- [2026-11-02 k7m2qx] ...`, with shorter dated-note and
   correction instructions.
 
+## Scoped memory everywhere (done 2026-11-05)
+
+- [x] One `app.Binding` policy across CLI, all hooks, MCP, TUI and web.
+  Client jcode instances allow only their own scopes, shared global and the
+  current project. Global/unbound sessions exclude other indexed/discovered
+  instances while retaining personal, named and engram scopes.
+- [x] Scoped search, recall, list, show, related, forget, remember, stats and
+  injection history. Owner read views widen only with explicit `--all` or
+  `--scope`, and never widen writes. TUI/web display the active binding.
+- [x] Strict nearest-ancestor `.muninn/client` marker containing one client name.
+  It overrides `JCODE_HOME`, admits only that client's scopes, and fails closed
+  with a lint-style error when invalid. Other bindings always exclude `client:*`.
+  Project scopes and sync identities beneath a client root include its name.
+- [x] Only admin CLI `rescope <id> --to <scope> --cross-client` can move owned
+  memories across client boundaries. Sids and upstream mappings are retained.
+  Import/sync cannot bypass the boundary, and harness files stay read-only.
+- [x] Shared adversarial alpha/global/client matrix exercises every memory
+  surface, including aliases/prefixes, hidden-id actions, default writes,
+  personal/engram/named scopes, owner flags, invalid markers and rescope mirrors.
+
 ## Project memories on their own branch
 
 `muninn sync` moves from `.muninn/memories.jsonl` on main to its own orphan

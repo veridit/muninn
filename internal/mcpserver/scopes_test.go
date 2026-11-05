@@ -106,3 +106,27 @@ func TestScopeMatrixMCP(t *testing.T) {
 		})
 	}
 }
+
+func TestScopeMatrixInvalidClientMCP(t *testing.T) {
+	f := scopetest.New(t)
+	f.Invalidate(t)
+	cs := connect(t, f.App, Options{})
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"memory_search", map[string]any{"query": scopetest.Query}},
+		{"memory_recall", map[string]any{"message": scopetest.Query}},
+		{"memory_stats", map[string]any{}},
+		{"memory_related", map[string]any{"id": f.Units["Shared"].SID}},
+		{"memory_forget", map[string]any{"id": f.Units["Shared"].SID}},
+		{"memory_remember", map[string]any{"content": "not stored"}},
+	} {
+		out, isErr := call(t, cs, tc.tool, tc.args)
+		if !isErr || !strings.Contains(out, "invalid client name") {
+			t.Fatalf("%s failed open: %s", tc.tool, out)
+		}
+		f.Clean(t, "client", out)
+	}
+	scopetest.Pass(t, "mcp.fail-closed", "invalid-client")
+}

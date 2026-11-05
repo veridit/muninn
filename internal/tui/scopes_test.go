@@ -66,3 +66,16 @@ func TestScopeMatrixTUI(t *testing.T) {
 		})
 	}
 }
+
+func TestScopeMatrixInvalidClientTUI(t *testing.T) {
+	f := scopetest.New(t)
+	f.Invalidate(t)
+	m := newModel(f.App)
+	m.input.SetValue(scopetest.Query)
+	var tm tea.Model = drive(t, m, m.run()())
+	if !strings.Contains(tm.View(), "invalid client name") {
+		t.Fatal(tm.View())
+	}
+	f.Clean(t, "client", tm.View())
+	scopetest.Pass(t, "tui.fail-closed", "invalid-client")
+}

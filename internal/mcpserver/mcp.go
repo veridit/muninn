@@ -80,10 +80,13 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 		cwd, _ := os.Getwd()
 		opt = a.Bound("", cwd)
 	}
-	s := mcp.NewServer(&mcp.Implementation{Name: "muninn", Version: version}, &mcp.ServerOptions{Instructions: Instructions})
+	s := mcp.NewServer(&mcp.Implementation{Name: "muninn", Version: version}, &mcp.ServerOptions{Instructions: Instructions + "\nActive binding: " + opt.Name + ". New memories default to " + opt.DefaultScope + ". Other instances and client boundaries are not available."})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_search", Description: "Search local memories (keyword + concept community + semantic). Use before answering questions about the user, their projects or past decisions."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, hitsOut, error) {
+			if opt.Err != nil {
+				return nil, hitsOut{}, opt.Err
+			}
 			o := a.RecallOptions()
 			o.MinScore, o.Limit, o.Scopes = 0, in.Limit, opt.Scopes
 			if o.Limit <= 0 {
@@ -158,6 +161,9 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
 			Message string `json:"message"`
 		}) (*mcp.CallToolResult, recall.Response, error) {
+			if opt.Err != nil {
+				return nil, recall.Response{}, opt.Err
+			}
 			resp, err := a.Recall.Recall(ctx, recall.Request{Message: in.Message, Harness: "mcp", Scopes: opt.Scopes})
 			if err != nil {
 				return nil, recall.Response{}, err
