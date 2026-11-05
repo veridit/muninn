@@ -83,7 +83,7 @@ func (m model) run() tea.Cmd {
 			return resultsMsg{}
 		}
 		if md == modeRecall {
-			r, err := m.a.Recall.Recall(ctx, recall.Request{Message: q, Harness: "tui", Scopes: m.binding.Scopes, ScopeFor: m.binding.ScopeFor})
+			r, err := m.a.Recall.Recall(ctx, recall.Request{Message: q, Harness: "tui", Scopes: m.binding.Scopes, ScopeFor: m.binding.ScopeFor, LearningScope: m.binding.LearningKey()})
 			return resultsMsg{block: r.Block, elapsed: time.Since(t0), err: err}
 		}
 		o := m.a.RecallOptions()

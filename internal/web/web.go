@@ -119,7 +119,7 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 400, err)
 			return
 		}
-		resp, err := s.App.Recall.Recall(r.Context(), recall.Request{Message: in.Message, Session: in.Session, Harness: in.Harness, Scopes: b.Scopes, ScopeFor: b.ScopeFor})
+		resp, err := s.App.Recall.Recall(r.Context(), recall.Request{Message: in.Message, Session: in.Session, Harness: in.Harness, Scopes: b.Scopes, ScopeFor: b.ScopeFor, LearningScope: b.LearningKey()})
 		if err != nil {
 			fail(w, 500, err)
 			return

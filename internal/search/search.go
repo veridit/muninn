@@ -30,6 +30,12 @@ import (
 
 // Options tunes a search.
 type Options struct {
+	// KeywordTerms overrides tokenisation for passage retrieval. Nil preserves Search.
+	KeywordTerms []string
+	// QueryVector avoids an embedding call when passage vectors were batched.
+	QueryVector []float32
+	// VectorProvided disables embedding even when a batch failed.
+	VectorProvided bool
 	Limit          int
 	MinScore       float64 // drop results below this total (0 = keep all)
 	SemanticWeight float64
@@ -104,7 +110,10 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 	if o.Limit <= 0 {
 		o.Limit = 10
 	}
-	words := QueryWords(query)
+	words := o.KeywordTerms
+	if words == nil {
+		words = QueryWords(query)
+	}
 	scores := map[int64]*acc{}
 	get := func(id int64) *acc {
 		a := scores[id]
@@ -228,12 +237,22 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 	// 5c. semantic similarity.
 	sem := map[int64]float64{}
 	semOn := false
-	if s.Embedder != nil && strings.TrimSpace(query) != "" {
+	if o.VectorProvided {
+		if len(o.QueryVector) > 0 {
+			semOn = true
+			if err := s.semantic(ctx, o.QueryVector, o, sem); err != nil {
+				return nil, err
+			}
+			for id := range sem {
+				get(id)
+			}
+		}
+	} else if s.Embedder != nil && strings.TrimSpace(query) != "" {
 		// Embed the query the way the active pipeline's documents were
 		// embedded (mid-migration that may be the previous prompt recipe).
 		qtext := embed.Query(s.Embedder, query)
-		if s.DB.GetMeta("pipeline_hash") != index.PipelineHash(s.Embedder.Model()) {
-			qtext = s.DB.GetMeta("pipeline_query_prefix") + query
+		if s.DB.GetMetaContext(ctx, "pipeline_hash") != index.PipelineHash(s.Embedder.Model()) {
+			qtext = s.DB.GetMetaContext(ctx, "pipeline_query_prefix") + query
 		}
 		vecs, err := s.Embedder.Embed(ctx, []string{qtext})
 		if err == nil && len(vecs) == 1 {
@@ -322,7 +341,7 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 			continue
 		}
 		id, a := c.id, c.a
-		u, err := s.DB.GetUnit(id)
+		u, err := s.DB.GetUnitContext(ctx, id)
 		if err == sql.ErrNoRows {
 			continue
 		}
@@ -336,7 +355,7 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 				continue
 			}
 		}
-		if !u.Active || !s.DB.IsCanonical(u) || !allowed(u.Scope, o.Scopes) || !allowed(u.Kind, o.Kinds) || seenSID[u.SID] || seenText[u.ContentHash] {
+		if !u.Active || !s.DB.IsCanonicalContext(ctx, u) || !allowed(u.Scope, o.Scopes) || !allowed(u.Kind, o.Kinds) || seenSID[u.SID] || seenText[u.ContentHash] {
 			continue
 		}
 		seenText[u.ContentHash] = true
@@ -387,7 +406,7 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 // semantic scores every embedded active unit by cosine; above PrefilterAbove
 // vectors it first keeps the closest candidates by sketch Hamming distance.
 func (s *Searcher) semantic(ctx context.Context, q []float32, o Options, out map[int64]float64) error {
-	pipeline := s.DB.GetMeta("pipeline_hash")
+	pipeline := s.DB.GetMetaContext(ctx, "pipeline_hash")
 	if pipeline == "" {
 		pipeline = index.PipelineHash(s.Embedder.Model())
 	}

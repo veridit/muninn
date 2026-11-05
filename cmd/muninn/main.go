@@ -152,7 +152,7 @@ func searchCmd() *cobra.Command {
 
 func recallCmd() *cobra.Command {
 	var session, harnessName string
-	var stdin bool
+	var stdin, explain bool
 	var view viewFlags
 	c := &cobra.Command{Use: "recall [message]", Short: "Automatic-recall block for a message (generic harness entry point)",
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -166,12 +166,17 @@ func recallCmd() *cobra.Command {
 					return err
 				}
 				binding := view.binding(a)
-				resp, err := a.Recall.Recall(ctx, recall.Request{Session: session, Harness: harnessName, Message: msg, Scopes: binding.Scopes, ScopeFor: binding.ScopeFor})
+				resp, err := a.Recall.Recall(ctx, recall.Request{Session: session, Harness: harnessName, Message: msg, Scopes: binding.Scopes, ScopeFor: binding.ScopeFor, LearningScope: binding.LearningKey()})
 				if err != nil {
 					return err
 				}
 				if resp.Block != "" {
 					fmt.Println(resp.Block)
+				}
+				if explain {
+					for _, hit := range resp.Hits {
+						fmt.Fprintf(os.Stderr, "%s: %s\n", hit.SID, hit.Why)
+					}
 				}
 				return nil
 			})
@@ -179,6 +184,7 @@ func recallCmd() *cobra.Command {
 	c.Flags().StringVar(&session, "session", "", "session id for per-session dedupe")
 	c.Flags().StringVar(&harnessName, "harness", "cli", "harness name for the injection log")
 	c.Flags().BoolVar(&stdin, "stdin", false, "read the message from stdin")
+	c.Flags().BoolVar(&explain, "explain", false, "show passage and rare-term justification on stderr")
 	view.flags(c)
 	return c
 }
@@ -480,7 +486,7 @@ func hookRecallWith(ctx context.Context, a *app.App, harnessName, session, msg s
 		logHook("reindex: %v", err)
 	}
 	b = b.Refresh(a)
-	return a.Recall.Recall(ctx, recall.Request{Session: harnessName + ":" + session, Harness: harnessName, Message: msg, Scopes: b.Scopes, ScopeFor: b.ScopeFor})
+	return a.Recall.Recall(ctx, recall.Request{Session: harnessName + ":" + session, Harness: harnessName, Message: msg, Scopes: b.Scopes, ScopeFor: b.ScopeFor, LearningScope: b.LearningKey()})
 }
 
 func dirExists(p string) bool {

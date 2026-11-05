@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,6 +35,29 @@ type bindingContext struct {
 	home, cwd string
 	all       bool
 	scopes    []string
+}
+
+// LearningKey separates query fingerprints by the complete visibility policy,
+// including physical source provenance. It never contains passage text.
+func (b Binding) LearningKey() string {
+	if b.Err != nil {
+		return ""
+	}
+	var parts []string
+	parts = append(parts, b.Client, b.Name)
+	if b.context != nil {
+		parts = append(parts, b.context.home, b.context.cwd)
+	}
+	scopes := append([]string(nil), b.Scopes...)
+	sort.Strings(scopes)
+	parts = append(parts, scopes...)
+	var sources []string
+	for id, client := range b.sourceClients {
+		sources = append(sources, fmt.Sprintf("%d:%s", id, client))
+	}
+	sort.Strings(sources)
+	parts = append(parts, sources...)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(parts, "\x00"))))
 }
 
 // Bound resolves explicit home, then JCODE_HOME, then the global instance.

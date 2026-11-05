@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -38,6 +39,11 @@ type DB struct {
 }
 
 const schema = `
+CREATE TABLE IF NOT EXISTS recall_passages (
+ binding TEXT NOT NULL, fingerprint TEXT NOT NULL, session TEXT NOT NULL,
+ at_ns INTEGER NOT NULL, PRIMARY KEY(binding,fingerprint,session)
+);
+CREATE INDEX IF NOT EXISTS recall_passages_age ON recall_passages(at_ns);
 CREATE TABLE IF NOT EXISTS capture_bindings (session TEXT PRIMARY KEY, scope TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS capture_seen (
  session TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(session,message)
@@ -278,15 +284,24 @@ func (d *DB) DeleteUnit(id int64) error {
 
 // GetUnit loads one unit.
 func (d *DB) GetUnit(id int64) (Unit, error) {
+	return d.GetUnitContext(context.Background(), id)
+}
+
+// GetUnitContext is GetUnit with a caller-owned read deadline.
+func (d *DB) GetUnitContext(ctx context.Context, id int64) (Unit, error) {
 	var u Unit
 	var tags string
 	var active int
 	var upd int64
-	err := d.QueryRow(`SELECT id, sid, origin, source_id, key, content_hash, kind, title, body, category, tags, scope, active, updated_ns
+	err := d.QueryRowContext(ctx, `SELECT id, sid, origin, source_id, key, content_hash, kind, title, body, category, tags, scope, active, updated_ns
 	  FROM units WHERE id=?`, id).Scan(&u.ID, &u.SID, &u.Origin, &u.SourceID, &u.Key, &u.ContentHash, &u.Kind, &u.Title, &u.Body,
 		&u.Category, &tags, &u.Scope, &active, &upd)
 	u.Tags = strings.Fields(tags)
-	u.Active = active == 1 && !d.IsSuppressed(u.SID)
+	var suppressed int
+	if err == nil {
+		err = d.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM suppressed WHERE sid=?)`, u.SID).Scan(&suppressed)
+	}
+	u.Active = active == 1 && suppressed == 0
 	u.Updated = time.Unix(0, upd)
 	return u, err
 }
@@ -322,8 +337,13 @@ func (d *DB) GC(pipeline string) (int64, error) {
 
 // Meta helpers.
 func (d *DB) GetMeta(k string) string {
+	return d.GetMetaContext(context.Background(), k)
+}
+
+// GetMetaContext reads optional metadata within the caller's budget.
+func (d *DB) GetMetaContext(ctx context.Context, k string) string {
 	var v string
-	_ = d.QueryRow(`SELECT value FROM meta WHERE key=?`, k).Scan(&v)
+	_ = d.QueryRowContext(ctx, `SELECT value FROM meta WHERE key=?`, k).Scan(&v)
 	return v
 }
 

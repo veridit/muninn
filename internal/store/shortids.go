@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -336,8 +337,13 @@ func (d *DB) Resolve(ref string) (Unit, error) {
 // IsCanonical checks ownership before recall. An inactive native twin still
 // supersedes a live harness row, even when their text differs.
 func (d *DB) IsCanonical(u Unit) bool {
+	return d.IsCanonicalContext(context.Background(), u)
+}
+
+// IsCanonicalContext checks identity ownership within a caller's budget.
+func (d *DB) IsCanonicalContext(ctx context.Context, u Unit) bool {
 	var id int64
-	return d.QueryRow(`SELECT u.id FROM units u JOIN sources s ON s.id=u.source_id WHERE u.sid=? ORDER BY (s.kind='native') DESC,u.updated_ns DESC,u.id LIMIT 1`, u.SID).Scan(&id) == nil && id == u.ID
+	return d.QueryRowContext(ctx, `SELECT u.id FROM units u JOIN sources s ON s.id=u.source_id WHERE u.sid=? ORDER BY (s.kind='native') DESC,u.updated_ns DESC,u.id LIMIT 1`, u.SID).Scan(&id) == nil && id == u.ID
 }
 
 func (d *DB) IsSuppressed(sid string) bool {

@@ -168,7 +168,7 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 			if opt.Err != nil {
 				return nil, recall.Response{}, opt.Err
 			}
-			resp, err := a.Recall.Recall(ctx, recall.Request{Message: in.Message, Harness: "mcp", Scopes: opt.Scopes, ScopeFor: opt.ScopeFor})
+			resp, err := a.Recall.Recall(ctx, recall.Request{Message: in.Message, Harness: "mcp", Scopes: opt.Scopes, ScopeFor: opt.ScopeFor, LearningScope: opt.LearningKey()})
 			if err != nil {
 				return nil, recall.Response{}, err
 			}
