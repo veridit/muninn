@@ -128,7 +128,8 @@ func searchCmd() *cobra.Command {
 			return withApp(func(ctx context.Context, a *app.App) error {
 				o := a.RecallOptions()
 				o.Limit, o.MinScore = limit, minScore
-				o.Scopes = view.binding(a).Scopes
+				b := view.binding(a)
+				o.Scopes, o.ScopeFor = b.Scopes, b.ScopeFor
 				res, err := a.Searcher.Search(ctx, strings.Join(args, " "), o)
 				if err != nil {
 					return err
@@ -164,7 +165,7 @@ func recallCmd() *cobra.Command {
 					return err
 				}
 				binding := view.binding(a)
-				resp, err := a.Recall.Recall(ctx, recall.Request{Session: session, Harness: harnessName, Message: msg, Scopes: binding.Scopes})
+				resp, err := a.Recall.Recall(ctx, recall.Request{Session: session, Harness: harnessName, Message: msg, Scopes: binding.Scopes, ScopeFor: binding.ScopeFor})
 				if err != nil {
 					return err
 				}
@@ -304,8 +305,9 @@ func listCmd() *cobra.Command {
 	var view viewFlags
 	c := &cobra.Command{Use: "list", Short: "List indexed memories", RunE: func(*cobra.Command, []string) error {
 		return withApp(func(ctx context.Context, a *app.App) error {
-			where, params := search.ScopeSQL("u.scope", view.binding(a).Scopes)
-			rows, err := a.DB.QueryContext(ctx, `SELECT sid, kind, scope, body FROM units u WHERE (`+where+`) AND active=1 AND sid NOT IN (SELECT sid FROM suppressed)
+			b := view.binding(a)
+			where, params := b.SQL("u.scope", "u.source_id")
+			rows, err := a.DB.QueryContext(ctx, `SELECT sid, kind, `+b.ScopeExpr("u.scope", "u.source_id")+`, body FROM units u WHERE (`+where+`) AND active=1 AND sid NOT IN (SELECT sid FROM suppressed)
     AND u.id=(SELECT c.id FROM units c JOIN sources cs ON cs.id=c.source_id WHERE c.sid=u.sid ORDER BY (cs.kind='native') DESC,c.updated_ns DESC,c.id LIMIT 1)
     ORDER BY updated_ns DESC LIMIT ?`, append(params, limit)...)
 			if err != nil {
@@ -336,7 +338,7 @@ func relatedCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				res, err := a.Searcher.RelatedIn(ctx, u.ID, 10, binding.Scopes)
+				res, err := a.Searcher.RelatedIn(ctx, u.ID, 10, binding.Scopes, binding.ScopeFor)
 				if err != nil {
 					return err
 				}
@@ -434,8 +436,7 @@ func runHook(name string, budget time.Duration) error {
 		if binding.Err != nil {
 			return binding.Err
 		}
-		scopes := binding.Scopes
-		resp, err := hookRecallWith(ctx, a, name, sid, msg, scopes)
+		resp, err := hookRecallWith(ctx, a, name, sid, msg, binding)
 		if err != nil || resp.Block == "" {
 			logHook("jcode[%s] %s: msg=%q hits=0 skipped=%q elapsed=%s", inst.Name, short(sid), recall.Truncate(msg, 60), resp.Skipped, resp.Elapsed)
 			return err
@@ -470,14 +471,15 @@ func hookRecall(ctx context.Context, harnessName, session, msg, cwd string) (rec
 	if b.Err != nil {
 		return recall.Response{}, b.Err
 	}
-	return hookRecallWith(ctx, a, harnessName, session, msg, b.Scopes)
+	return hookRecallWith(ctx, a, harnessName, session, msg, b)
 }
 
-func hookRecallWith(ctx context.Context, a *app.App, harnessName, session, msg string, scopes []string) (recall.Response, error) {
+func hookRecallWith(ctx context.Context, a *app.App, harnessName, session, msg string, b app.Binding) (recall.Response, error) {
 	if _, err := ensureFresh(ctx, a); err != nil {
 		logHook("reindex: %v", err)
 	}
-	return a.Recall.Recall(ctx, recall.Request{Session: harnessName + ":" + session, Harness: harnessName, Message: msg, Scopes: scopes})
+	b = b.Refresh(a)
+	return a.Recall.Recall(ctx, recall.Request{Session: harnessName + ":" + session, Harness: harnessName, Message: msg, Scopes: b.Scopes, ScopeFor: b.ScopeFor})
 }
 
 func dirExists(p string) bool {

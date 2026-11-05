@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/veridit/muninn/internal/harness"
@@ -19,18 +20,57 @@ import (
 // Scopes supports exact names, trailing * prefixes and leading ! exclusions.
 // Owner view overrides change reads only, never the underlying write policy.
 type Binding struct {
-	Scopes       []string
-	DefaultScope string
-	Name         string
-	Client       string
-	Err          error
-	writeScopes  []string
+	Scopes        []string
+	DefaultScope  string
+	Name          string
+	Client        string
+	Err           error
+	writeScopes   []string
+	sourceClients map[int64]string
+	context       *bindingContext
+}
+
+type bindingContext struct {
+	home, cwd string
+	all       bool
+	scopes    []string
 }
 
 // Bound resolves explicit home, then JCODE_HOME, then the global instance.
 // Client instances are allow-listed. Global excludes every known client,
 // including indexed scopes whose instance is temporarily absent on disk.
 func (a *App) Bound(jcodeHome, cwd string) Binding {
+	if jcodeHome == "" {
+		jcodeHome = os.Getenv("JCODE_HOME")
+	}
+	if jcodeHome == "" {
+		home, _ := os.UserHomeDir()
+		jcodeHome = filepath.Join(home, ".jcode")
+	}
+	jcodeHome, _ = filepath.Abs(jcodeHome)
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	b := a.bound(jcodeHome, cwd)
+	b.context = &bindingContext{home: jcodeHome, cwd: cwd}
+	return b.Refresh(a)
+}
+
+// Refresh discovers newly indexed sources while keeping an owner's explicit
+// view and the original write policy. Filesystem ancestry stays process-local.
+func (b Binding) Refresh(a *App) Binding {
+	if c := b.context; c != nil {
+		fresh := a.bound(c.home, c.cwd).View(c.all, c.scopes)
+		fresh.context = c
+		b = fresh
+	}
+	if b.Err == nil {
+		b.sourceClients, b.Err = a.sourceClients()
+	}
+	return b
+}
+
+func (a *App) bound(jcodeHome, cwd string) Binding {
 	client, _, markerErr := project.ClientRoot(cwd)
 	if markerErr != nil {
 		return Binding{Name: "client (invalid marker)", Err: markerErr, Scopes: []string{"!*"}, writeScopes: []string{"!*"}}
@@ -105,6 +145,12 @@ func (b Binding) View(all bool, scopes []string) Binding {
 	if b.Client != "" || b.Err != nil {
 		return b
 	}
+	if b.context != nil {
+		c := *b.context
+		c.all = all
+		c.scopes = append([]string(nil), scopes...)
+		b.context = &c
+	}
 	if all {
 		b.Scopes = nil
 		b.Name += " (all)"
@@ -128,6 +174,13 @@ func (b Binding) WriteScope(scope string) (string, error) {
 	if scope == "" {
 		scope = "global"
 	}
+	if strings.HasPrefix(scope, "jcode@") && b.DefaultScope != "" {
+		instance, _, _ := strings.Cut(scope, ":")
+		own, _, _ := strings.Cut(b.DefaultScope, ":")
+		if instance != own {
+			return "", fmt.Errorf("scope %q is not available in this binding", scope)
+		}
+	}
 	rules := b.writeScopes
 	if rules == nil {
 		rules = b.Scopes
@@ -139,6 +192,7 @@ func (b Binding) WriteScope(scope string) (string, error) {
 }
 
 func (b Binding) ResolveAll(a *App, ref string) ([]store.Unit, error) {
+	b = b.Refresh(a)
 	if b.Err != nil {
 		return nil, b.Err
 	}
@@ -146,13 +200,13 @@ func (b Binding) ResolveAll(a *App, ref string) ([]store.Unit, error) {
 	if err != nil {
 		return nil, fmt.Errorf("no visible memory")
 	}
-	if !b.Allows(units[0].Scope) {
+	if _, ok := b.Present(units[0]); !ok {
 		return nil, fmt.Errorf("no visible memory")
 	}
 	var visible []store.Unit
 	for _, u := range units {
-		if b.Allows(u.Scope) {
-			visible = append(visible, u)
+		if shown, ok := b.Present(u); ok {
+			visible = append(visible, shown)
 		}
 	}
 	if len(visible) == 0 {
@@ -168,6 +222,7 @@ func (b Binding) Resolve(a *App, ref string) (store.Unit, error) {
 	return units[0], nil
 }
 func (b Binding) Forget(ctx context.Context, a *App, ref string) (ForgetResult, error) {
+	b = b.Refresh(a)
 	if b.Err != nil {
 		return ForgetResult{}, b.Err
 	}
@@ -176,7 +231,7 @@ func (b Binding) Forget(ctx context.Context, a *App, ref string) (ForgetResult, 
 	if err != nil {
 		return ForgetResult{}, fmt.Errorf("no visible memory")
 	}
-	if !b.Allows(units[0].Scope) {
+	if _, ok := b.Present(units[0]); !ok {
 		return ForgetResult{}, fmt.Errorf("no visible memory")
 	}
 	for _, u := range units {
@@ -189,16 +244,162 @@ func (b Binding) Forget(ctx context.Context, a *App, ref string) (ForgetResult, 
 		if kind != "native" && u.ID != units[0].ID {
 			continue
 		}
-		if !b.Allows(u.Scope) {
+		shown, ok := b.Present(u)
+		if !ok {
 			return ForgetResult{}, fmt.Errorf("no visible memory")
 		}
-		if _, err := b.WriteScope(u.Scope); err != nil {
+		if _, err := b.WriteScope(shown.Scope); err != nil {
 			return ForgetResult{}, fmt.Errorf("no visible memory")
 		}
 	}
 	return a.Forget(ctx, ref)
 }
+
+type sourceBoundary struct {
+	client string
+	err    error
+}
+
+// Cache filesystem ancestry only in this process, never in the index. Native
+// storage pools many scopes, so only non-native paths carry source provenance.
+func (a *App) sourceClients() (map[int64]string, error) {
+	rows, err := a.DB.Query(`SELECT id,path,kind FROM sources`)
+	if err != nil {
+		return nil, err
+	}
+	type source struct {
+		id         int64
+		path, kind string
+	}
+	var sources []source
+	for rows.Next() {
+		var s source
+		if err := rows.Scan(&s.id, &s.path, &s.kind); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		sources = append(sources, s)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	a.sourceMu.Lock()
+	defer a.sourceMu.Unlock()
+	if a.sourceRoots == nil {
+		a.sourceRoots = map[string]sourceBoundary{}
+	}
+	out := map[int64]string{}
+	for _, s := range sources {
+		if s.kind == "native" {
+			out[s.id] = "!native"
+			continue
+		}
+		root, ok := a.sourceRoots[s.path]
+		if !ok {
+			physical := s.path
+			if resolved, e := filepath.EvalSymlinks(physical); e == nil {
+				physical = resolved
+			}
+			root.client, _, root.err = project.ClientRoot(filepath.Dir(physical))
+			a.sourceRoots[s.path] = root
+		}
+		if root.err != nil {
+			out[s.id] = "!invalid"
+		} else {
+			out[s.id] = root.client
+		}
+	}
+	return out, nil
+}
+
+// ScopeFor overlays a physical client's scope without changing stored ids,
+// scope or origin. Unmarked non-native sources have no client provenance.
+func (b Binding) ScopeFor(u store.Unit) (string, bool) {
+	if b.Err != nil {
+		return "", false
+	}
+	if b.sourceClients != nil {
+		client, known := b.sourceClients[u.SourceID]
+		if !known {
+			return "", false
+		}
+		if client == "!native" {
+			return u.Scope, true
+		}
+		if client == "!invalid" || client != b.Client {
+			return "", false
+		}
+		if client != "" {
+			return "client:" + client, true
+		}
+	}
+	return u.Scope, true
+}
+func (b Binding) Present(u store.Unit) (store.Unit, bool) {
+	scope, ok := b.ScopeFor(u)
+	u.Scope = scope
+	return u, ok && b.Allows(scope)
+}
+
+// ScopeExpr and SQL are the SQL equivalent of ScopeFor + Allows, used by
+// list, stats and injection history so no surface maintains a second policy.
+func (b Binding) ScopeExpr(scopeCol, sourceCol string) string {
+	var ids []int64
+	for id, c := range b.sourceClients {
+		if c != "" && c != "!invalid" && c != "!native" {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	if len(ids) == 0 {
+		return scopeCol
+	}
+	var out strings.Builder
+	out.WriteString("CASE " + sourceCol)
+	for _, id := range ids {
+		fmt.Fprintf(&out, " WHEN %d THEN 'client:%s'", id, b.sourceClients[id])
+	}
+	out.WriteString(" ELSE " + scopeCol + " END")
+	return out.String()
+}
+func (b Binding) SQL(scopeCol, sourceCol string) (string, []any) {
+	if b.Err != nil {
+		return "0", nil
+	}
+	where, args := search.ScopeSQL(b.ScopeExpr(scopeCol, sourceCol), b.Scopes)
+	// A concurrent indexer may register a source after this snapshot. Unknown
+	// provenance is invisible until the next refresh, just like ScopeFor.
+	if b.sourceClients != nil {
+		var known []string
+		for id := range b.sourceClients {
+			known = append(known, strconv.FormatInt(id, 10))
+		}
+		if len(known) == 0 {
+			return "0", nil
+		}
+		sort.Strings(known)
+		where = "(" + where + ") AND " + sourceCol + " IN (" + strings.Join(known, ",") + ")"
+	}
+	var hidden []int64
+	for id, c := range b.sourceClients {
+		if c != "!native" && (c == "!invalid" || c != b.Client) {
+			hidden = append(hidden, id)
+		}
+	}
+	sort.Slice(hidden, func(i, j int) bool { return hidden[i] < hidden[j] })
+	if len(hidden) > 0 {
+		var ids []string
+		for _, id := range hidden {
+			ids = append(ids, strconv.FormatInt(id, 10))
+		}
+		where = "(" + where + ") AND " + sourceCol + " NOT IN (" + strings.Join(ids, ",") + ")"
+	}
+	return where, args
+}
 func (b Binding) Remember(ctx context.Context, a *App, content, category, scope string, tags []string) (store.Unit, bool, error) {
+	b = b.Refresh(a)
 	scope, err := b.WriteScope(scope)
 	if err != nil {
 		return store.Unit{}, false, err

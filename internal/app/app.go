@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/veridit/muninn/internal/config"
@@ -18,13 +19,15 @@ import (
 
 // App is an opened muninn instance.
 type App struct {
-	Cfg      config.Config
-	DB       *store.DB
-	Embedder embed.Embedder // nil = keyword-only
-	EmbedNote string        // which embedder was chosen and why
-	Indexer  *index.Indexer
-	Searcher *search.Searcher
-	Recall   *recall.Engine
+	sourceMu    sync.Mutex
+	sourceRoots map[string]sourceBoundary
+	Cfg         config.Config
+	DB          *store.DB
+	Embedder    embed.Embedder // nil = keyword-only
+	EmbedNote   string         // which embedder was chosen and why
+	Indexer     *index.Indexer
+	Searcher    *search.Searcher
+	Recall      *recall.Engine
 }
 
 // NativePath is muninn's own memory file.

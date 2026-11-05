@@ -3,8 +3,6 @@ package app
 import (
 	"context"
 	"os"
-
-	"github.com/veridit/muninn/internal/search"
 )
 
 // IndexStats reports only data reachable through the active binding.
@@ -34,8 +32,9 @@ func Stats(ctx context.Context, a *App, bindings ...Binding) (IndexStats, error)
 		return IndexStats{}, b.Err
 	}
 	s := IndexStats{ByKind: map[string]int{}, ByScope: map[string]int{}, Binding: b.Name}
-	where, args := search.ScopeSQL("u.scope", b.Scopes)
-	cte := `WITH visible AS (SELECT u.* FROM units u WHERE (` + where + `)
+	b = b.Refresh(a)
+	where, args := b.SQL("u.scope", "u.source_id")
+	cte := `WITH visible AS (SELECT u.*, ` + b.ScopeExpr("u.scope", "u.source_id") + ` AS effective_scope FROM units u WHERE (` + where + `)
 	 AND u.id=(SELECT c.id FROM units c JOIN sources cs ON cs.id=c.source_id WHERE c.sid=u.sid ORDER BY (cs.kind='native') DESC,c.updated_ns DESC,c.id LIMIT 1)) `
 	for _, q := range []struct {
 		sql string
@@ -56,7 +55,7 @@ func Stats(ctx context.Context, a *App, bindings ...Binding) (IndexStats, error)
 	for _, g := range []struct {
 		col string
 		m   map[string]int
-	}{{"kind", s.ByKind}, {"scope", s.ByScope}} {
+	}{{"kind", s.ByKind}, {"effective_scope", s.ByScope}} {
 		rows, err := a.DB.QueryContext(ctx, cte+`SELECT `+g.col+`,COUNT(*) FROM visible WHERE active=1 AND sid NOT IN (SELECT sid FROM suppressed) GROUP BY `+g.col, args...)
 		if err != nil {
 			return s, err

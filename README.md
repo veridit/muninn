@@ -245,6 +245,14 @@ clients or personal scopes are refused. Project notes beneath that root use
 Neither `--all` nor `--scope` can cross a client-root boundary, including in
 TUI and web views. Imports and project sync respect the write boundary.
 
+Non-native sources also inherit their physical client root at read time:
+markdown notes, project memory files and jcode memory files under `acme`
+are visible only to `acme`, regardless of their old stored scope. Notes
+outside client roots are never visible inside one. This applies to search,
+related ids, show, recall, stats and injection history without changing ids
+or migrating the index. Source ancestry is cached only within the process.
+Invalid source-root markers hide those sources from every binding.
+
 Only an explicit admin CLI operation can move an owned memory across it:
 
 ```sh
@@ -307,7 +315,15 @@ Imports use the active binding too. Run an import in the intended instance;
 boundary. An import cannot overwrite a pre-existing identity in another
 binding.
 
-engram `personal` observations become `global`; project observations become
+External input such as Engram exports or files outside a client root carries
+no client provenance. It cannot be imported directly into a `client:*` scope,
+even with `--map`: import outside the client, then use the explicit admin
+`rescope --cross-client` command. A jcode memory source physically beneath a
+client root can be imported into that same client. File formats are unchanged.
+
+New engram `personal` or empty-project observations become `personal`;
+existing rows keep their scopes, with no automatic rescope. `global` is for
+working rules deliberately shared with non-client bindings. Project observations become
 `engram:<project>` unless mapped. Identical text indexed from two places
 (a live jcode memory and its imported copy) is shown once.
 

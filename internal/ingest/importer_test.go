@@ -76,9 +76,9 @@ func TestEngramItemsScopes(t *testing.T) {
 		active        bool
 	}{
 		{"engram:obs-a", "jcode@statbus", true},
-		{"engram:obs-b", "global", true},
+		{"engram:obs-b", "personal", true},
 		{"engram:id-7", "engram:frogs", false},
-		{"engram:obs-d", "global", true},
+		{"engram:obs-d", "personal", true},
 	}
 	for i, w := range want {
 		if got[i].Origin != w.origin || got[i].Scope != w.scope || got[i].Active != w.active {

@@ -61,5 +61,15 @@ func TestClientRootWalkNearestAndInvalid(t *testing.T) {
 	if err != nil || name != "acme" {
 		t.Fatalf("symlink bypass: %q %v", name, err)
 	}
+	name, _, err = ClientRoot(filepath.Join(link, "not-created", "nested"))
+	if err != nil || name != "acme" {
+		t.Fatalf("missing descendant symlink bypass: %q %v", name, err)
+	}
+	if err := os.Symlink(filepath.Join(root, "missing-marker"), nested); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ClientRoot(child); err == nil {
+		t.Fatal("dangling marker failed open")
+	}
 	t.Log("SCOPE MATRIX PASS surface=client-marker.walk-nearest-invalid-symlink binding=client")
 }

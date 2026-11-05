@@ -26,8 +26,25 @@ func ClientRoot(cwd string) (name, root string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	if physical, e := filepath.EvalSymlinks(cwd); e == nil {
-		cwd = physical
+	// Resolve the longest existing ancestor too: hook payloads can name a
+	// not-yet-created directory beneath a symlink into a client workspace.
+	var tail []string
+	for d := cwd; ; d = filepath.Dir(d) {
+		physical, e := filepath.EvalSymlinks(d)
+		if e == nil {
+			cwd = physical
+			for i := len(tail) - 1; i >= 0; i-- {
+				cwd = filepath.Join(cwd, tail[i])
+			}
+			break
+		}
+		if !errors.Is(e, os.ErrNotExist) {
+			return "", "", fmt.Errorf("%s: %w", d, e)
+		}
+		if filepath.Dir(d) == d {
+			return "", "", e
+		}
+		tail = append(tail, filepath.Base(d))
 	}
 	for d := cwd; ; d = filepath.Dir(d) {
 		path := filepath.Join(d, ".muninn", "client")
@@ -41,6 +58,9 @@ func ClientRoot(cwd string) (name, root string, err error) {
 		}
 		if !errors.Is(e, os.ErrNotExist) {
 			return "", d, fmt.Errorf("%s: %w", path, e)
+		}
+		if _, statErr := os.Lstat(path); statErr == nil {
+			return "", d, fmt.Errorf("%s: unreadable client marker: %w", path, e)
 		}
 		if filepath.Dir(d) == d {
 			break

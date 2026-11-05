@@ -36,6 +36,7 @@ type Options struct {
 	SemanticFloor  float64
 	SemanticSlots  int
 	Scopes         []string // empty = all
+	ScopeFor       func(store.Unit) (string, bool)
 	Kinds          []string // empty = all
 }
 
@@ -259,16 +260,27 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 	// Otherwise a large other-client corpus can crowd out visible matches.
 	visible := map[int64]bool{}
 	where, args := ScopeSQL("scope", o.Scopes)
-	rows, err := s.DB.QueryContext(ctx, `SELECT id,scope,kind FROM units WHERE active=1 AND (`+where+`)`, args...)
+	if o.ScopeFor != nil {
+		where, args = "1", nil
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,source_id,scope,kind FROM units WHERE active=1 AND (`+where+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var id int64
+		var sourceID int64
 		var scope, kind string
-		if err := rows.Scan(&id, &scope, &kind); err != nil {
+		if err := rows.Scan(&id, &sourceID, &scope, &kind); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if o.ScopeFor != nil {
+			var ok bool
+			scope, ok = o.ScopeFor(store.Unit{ID: id, SourceID: sourceID, Scope: scope})
+			if !ok {
+				continue
+			}
 		}
 		if Allowed(scope, o.Scopes) && Allowed(kind, o.Kinds) {
 			visible[id] = true
@@ -316,6 +328,13 @@ func (s *Searcher) Search(ctx context.Context, query string, o Options) ([]Resul
 		}
 		if err != nil {
 			return nil, err
+		}
+		if o.ScopeFor != nil {
+			var ok bool
+			u.Scope, ok = o.ScopeFor(u)
+			if !ok {
+				continue
+			}
 		}
 		if !u.Active || !s.DB.IsCanonical(u) || !allowed(u.Scope, o.Scopes) || !allowed(u.Kind, o.Kinds) || seenSID[u.SID] || seenText[u.ContentHash] {
 			continue
@@ -381,18 +400,29 @@ func (s *Searcher) semantic(ctx context.Context, q []float32, o Options, out map
 	}
 	var all []hd
 	where, args := scopeSQL("u.scope", o.Scopes)
-	rows, err := s.DB.QueryContext(ctx, `SELECT u.id, u.scope, u.kind, s.sketch FROM units u JOIN sketches s
+	if o.ScopeFor != nil {
+		where, args = "1", nil
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT u.id, u.source_id, u.scope, u.kind, s.sketch FROM units u JOIN sketches s
 	  ON s.content_hash=u.content_hash AND s.pipeline_hash=? WHERE u.active=1 AND (`+where+`)`, append([]any{pipeline}, args...)...)
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
 		var id int64
+		var sourceID int64
 		var scope, kind string
 		var sk []byte
-		if err := rows.Scan(&id, &scope, &kind, &sk); err != nil {
+		if err := rows.Scan(&id, &sourceID, &scope, &kind, &sk); err != nil {
 			rows.Close()
 			return err
+		}
+		if o.ScopeFor != nil {
+			var ok bool
+			scope, ok = o.ScopeFor(store.Unit{ID: id, SourceID: sourceID, Scope: scope})
+			if !ok {
+				continue
+			}
 		}
 		if !allowed(scope, o.Scopes) || !allowed(kind, o.Kinds) {
 			continue
@@ -448,9 +478,20 @@ func (s *Searcher) Related(ctx context.Context, unitID int64, limit int) ([]Resu
 // RelatedIn is Related restricted to scopes (nil = all). A unit outside the
 // scopes yields nothing, so an id cannot be used to probe another client's
 // memories.
-func (s *Searcher) RelatedIn(ctx context.Context, unitID int64, limit int, scopes []string) ([]Result, error) {
-	if len(scopes) > 0 {
+func (s *Searcher) RelatedIn(ctx context.Context, unitID int64, limit int, scopes []string, scopeFns ...func(store.Unit) (string, bool)) ([]Result, error) {
+	var scopeFor func(store.Unit) (string, bool)
+	if len(scopeFns) > 0 {
+		scopeFor = scopeFns[0]
+	}
+	if len(scopes) > 0 || scopeFor != nil {
 		u, err := s.DB.GetUnit(unitID)
+		if scopeFor != nil {
+			var ok bool
+			u.Scope, ok = scopeFor(u)
+			if !ok {
+				return nil, nil
+			}
+		}
 		if err != nil || !allowed(u.Scope, scopes) {
 			return nil, nil
 		}
@@ -474,6 +515,13 @@ func (s *Searcher) RelatedIn(ctx context.Context, unitID int64, limit int, scope
 	seenSID := map[string]bool{}
 	for _, x := range list {
 		u, err := s.DB.GetUnit(x.id)
+		if scopeFor != nil {
+			var ok bool
+			u.Scope, ok = scopeFor(u)
+			if !ok {
+				continue
+			}
+		}
 		if err != nil || !u.Active || !s.DB.IsCanonical(u) || seenSID[u.SID] || !allowed(u.Scope, scopes) {
 			continue
 		}

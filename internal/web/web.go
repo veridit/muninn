@@ -76,15 +76,19 @@ func (s *Server) Handler() http.Handler {
 		b = s.App.Bound("", cwd)
 	}
 	if b.Err != nil {
-		return localOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fail(w, http.StatusUnprocessableEntity, b.Err) }))
+		return localOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			fail(w, http.StatusUnprocessableEntity, b.Err)
+		}))
 	}
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))
 
 	mux.HandleFunc("GET /api/search", func(w http.ResponseWriter, r *http.Request) {
+		b := b.Refresh(s.App)
 		o := s.App.RecallOptions()
 		o.MinScore, o.Limit, o.Scopes = 0, 20, b.Scopes
+		o.ScopeFor = b.ScopeFor
 		res, err := s.App.Searcher.Search(r.Context(), r.URL.Query().Get("q"), o)
 		if err != nil {
 			fail(w, 500, err)
@@ -93,12 +97,13 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, map[string]any{"results": s.hits(res, r.URL.Query().Get("explain") == "1")})
 	})
 	mux.HandleFunc("GET /api/related", func(w http.ResponseWriter, r *http.Request) {
+		b := b.Refresh(s.App)
 		u, err := b.Resolve(s.App, r.URL.Query().Get("id"))
 		if err != nil {
 			fail(w, 404, err)
 			return
 		}
-		res, err := s.App.Searcher.RelatedIn(r.Context(), u.ID, 10, b.Scopes)
+		res, err := s.App.Searcher.RelatedIn(r.Context(), u.ID, 10, b.Scopes, b.ScopeFor)
 		if err != nil {
 			fail(w, 500, err)
 			return
@@ -106,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, map[string]any{"results": s.hits(res, false)})
 	})
 	mux.HandleFunc("POST /api/recall", func(w http.ResponseWriter, r *http.Request) {
+		b := b.Refresh(s.App)
 		var in struct {
 			Message, Session, Harness string
 		}
@@ -113,7 +119,7 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 400, err)
 			return
 		}
-		resp, err := s.App.Recall.Recall(r.Context(), recall.Request{Message: in.Message, Session: in.Session, Harness: in.Harness, Scopes: b.Scopes})
+		resp, err := s.App.Recall.Recall(r.Context(), recall.Request{Message: in.Message, Session: in.Session, Harness: in.Harness, Scopes: b.Scopes, ScopeFor: b.ScopeFor})
 		if err != nil {
 			fail(w, 500, err)
 			return
@@ -121,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, resp)
 	})
 	mux.HandleFunc("POST /api/remember", func(w http.ResponseWriter, r *http.Request) {
+		b := b.Refresh(s.App)
 		var in struct {
 			Content, Category, Scope string
 			Tags                     []string
@@ -139,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, map[string]any{"id": u.SID, "reinforced": re})
 	})
 	mux.HandleFunc("POST /api/forget", func(w http.ResponseWriter, r *http.Request) {
+		b := b.Refresh(s.App)
 		var in struct{ ID string }
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			fail(w, 400, err)
@@ -154,7 +162,8 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, out)
 	})
 	mux.HandleFunc("GET /api/injections", func(w http.ResponseWriter, r *http.Request) {
-		where, args := search.ScopeSQL("u.scope", b.Scopes)
+		b := b.Refresh(s.App)
+		where, args := b.SQL("u.scope", "u.source_id")
 		rows, err := s.App.DB.QueryContext(r.Context(), `SELECT i.session, i.harness, i.at_ns, u.body FROM injections i
 		  JOIN units mirror ON mirror.id=i.unit_id JOIN units u ON u.sid=mirror.sid
 		  WHERE u.id=(SELECT c.id FROM units c JOIN sources cs ON cs.id=c.source_id WHERE c.sid=u.sid ORDER BY (cs.kind='native') DESC,c.updated_ns DESC,c.id LIMIT 1)
@@ -176,6 +185,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, map[string]any{"rows": lower(out)})
 	})
 	mux.HandleFunc("GET /api/stats", func(w http.ResponseWriter, r *http.Request) {
+		b := b.Refresh(s.App)
 		st, err := app.Stats(r.Context(), s.App, b)
 		if err != nil {
 			fail(w, 500, err)

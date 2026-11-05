@@ -22,10 +22,11 @@ const MaxQueryBytes = 8 << 10
 
 // Request is one recall call.
 type Request struct {
-	Session string // harness session id, for per-session dedupe
-	Harness string
-	Message string // the user's latest message
-	Scopes  []string
+	Session  string // harness session id, for per-session dedupe
+	Harness  string
+	Message  string // the user's latest message
+	Scopes   []string
+	ScopeFor func(store.Unit) (string, bool) `json:"-"`
 }
 
 // Hit is one recalled memory.
@@ -98,6 +99,7 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 	if len(r.Scopes) > 0 {
 		o.Scopes = r.Scopes
 	}
+	o.ScopeFor = r.ScopeFor
 	results, err := e.Searcher.Search(ctx, Truncate(msg, MaxQueryBytes), o)
 	if err != nil {
 		return Response{}, err

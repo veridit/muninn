@@ -40,12 +40,21 @@ func TestScopeMatrixTUI(t *testing.T) {
 			}
 			scopetest.Pass(t, "tui.related", binding)
 			// A stale selection or injected id cannot use either action to bypass binding.
-			forged := tm.(model)
-			forged.results = []search.Result{{Unit: f.Units["Beta"]}}
-			forged.cursor = 0
-			tm = drive(t, forged, tea.KeyMsg{Type: tea.KeyCtrlD})
-			if u, err := f.App.DB.Resolve(f.Units["Beta"].SID); err != nil || !u.Active {
-				t.Fatal("beta forgotten")
+			for _, ref := range f.HiddenRefs(binding) {
+				u, err := f.App.DB.Resolve(ref)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, key := range []tea.KeyType{tea.KeyCtrlR, tea.KeyCtrlD} {
+					forged := tm.(model)
+					forged.results = []search.Result{{Unit: u}}
+					forged.cursor = 0
+					tm = drive(t, forged, tea.KeyMsg{Type: key})
+					f.Clean(t, binding, tm.View())
+				}
+				if got, err := f.App.DB.Resolve(u.SID); err != nil || !got.Active {
+					t.Fatal("hidden memory changed")
+				}
 			}
 			// Forget a legitimate selection through the real key handler.
 			m = newModel(f.App)

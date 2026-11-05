@@ -91,7 +91,7 @@ func TestScopeMatrixWeb(t *testing.T) {
 				visible = f.Units["Client"]
 			}
 			for _, ref := range []string{visible.SID, visible.SID[:4], visible.Key} {
-				out, status := matrixRequest(h, "GET", "/api/related?id="+ref, "")
+				out, status := matrixRequest(h, "GET", "/api/related?id="+url.QueryEscape(ref), "")
 				if status != 200 {
 					t.Fatal(out)
 				}
@@ -100,8 +100,8 @@ func TestScopeMatrixWeb(t *testing.T) {
 					t.Fatal("empty related")
 				}
 			}
-			for _, ref := range []string{f.Units["Beta"].SID, f.Units["Beta"].SID[:4], f.Units["Beta"].Key, f.Units["OtherClient"].SID} {
-				out, status := matrixRequest(h, "GET", "/api/related?id="+ref, "")
+			for _, ref := range f.HiddenRefs(binding) {
+				out, status := matrixRequest(h, "GET", "/api/related?id="+url.QueryEscape(ref), "")
 				if status != 404 || !strings.Contains(out, "no visible memory") {
 					t.Fatal(out)
 				}
@@ -117,6 +117,7 @@ func TestScopeMatrixWeb(t *testing.T) {
 			if status != 200 {
 				t.Fatal(out)
 			}
+			f.CheckStats(t, binding, out)
 			f.Clean(t, binding, out)
 			if strings.Contains(out, "jcode@beta") || strings.Contains(out, "client:other") || !strings.Contains(out, b.Name) {
 				t.Fatal(out)

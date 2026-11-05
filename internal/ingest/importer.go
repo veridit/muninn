@@ -15,15 +15,16 @@ import (
 
 // Imported is one memory read from another memory system, before merging.
 type Imported struct {
-	Origin   string // stable upstream identity; the idempotency key
-	Title    string
-	Content  string
-	Category string
-	Tags     []string
-	Scope    string
-	Active   bool
-	Created  time.Time
-	Updated  time.Time
+	Origin    string // stable upstream identity; the idempotency key
+	Title     string
+	Content   string
+	Category  string
+	Tags      []string
+	Scope     string
+	Active    bool
+	Created   time.Time
+	Updated   time.Time
+	keepScope bool // new default only; existing Engram identities keep their scope
 }
 
 // ImportStats counts what one import did.
@@ -75,8 +76,11 @@ func MergeImport(path string, items []Imported, dry bool) (ImportStats, error) {
 		if it.Scope == "" {
 			it.Scope = "global"
 		}
-		h := originHash(it.Title, it.Content, it.Scope, it.Active)
 		i, ok := byOrigin[it.Origin]
+		if ok && it.keepScope {
+			it.Scope = mems[i].Scope
+		}
+		h := originHash(it.Title, it.Content, it.Scope, it.Active)
 		if !ok {
 			created, updated := it.Created, it.Updated
 			if created.IsZero() {
@@ -101,6 +105,9 @@ func MergeImport(path string, items []Imported, dry bool) (ImportStats, error) {
 			st.LocalKept++ // edited in muninn since the last import
 			continue
 		}
+		if clientBoundary(m.Scope) != clientBoundary(it.Scope) {
+			return st, fmt.Errorf("import cannot cross a client boundary; use muninn rescope --cross-client")
+		}
 		m.Title, m.Content, m.Category, m.Tags, m.Active = it.Title, it.Content, it.Category, it.Tags, it.Active
 		m.Scope, m.OriginHash, m.Updated = it.Scope, h, now
 		if !it.Updated.IsZero() {
@@ -112,6 +119,14 @@ func MergeImport(path string, items []Imported, dry bool) (ImportStats, error) {
 		return st, nil
 	}
 	return st, SaveNative(path, mems)
+}
+
+func clientBoundary(scope string) string {
+	if !strings.HasPrefix(scope, "client:") {
+		return ""
+	}
+	name, _, _ := strings.Cut(strings.TrimPrefix(scope, "client:"), ":")
+	return name
 }
 
 // MarkSynced records that every memory in scope now equals its copy in an
@@ -185,8 +200,8 @@ type EngramOptions struct {
 	ProjectScopes map[string]string
 }
 
-// EngramItems converts observations. engram's "personal" scope maps to
-// muninn's global scope; project observations to the project scope.
+// EngramItems converts observations. New personal or empty-project observations
+// use personal, preserving existing identities' scopes without a migration.
 func EngramItems(obs []EngramObservation, o EngramOptions) []Imported {
 	out := make([]Imported, 0, len(obs))
 	for _, ob := range obs {
@@ -198,7 +213,7 @@ func EngramItems(obs []EngramObservation, o EngramOptions) []Imported {
 		if ob.Project != nil {
 			project = strings.TrimSpace(*ob.Project)
 		}
-		scope := "global"
+		scope := "personal"
 		if ob.Scope != "personal" && project != "" {
 			scope = "engram:" + project
 			if s, ok := o.ProjectScopes[project]; ok {
@@ -210,7 +225,8 @@ func EngramItems(obs []EngramObservation, o EngramOptions) []Imported {
 			tags = []string{*ob.TopicKey}
 		}
 		out = append(out, Imported{Origin: "engram:" + key, Title: ob.Title, Content: ob.Content,
-			Category: ob.Type, Tags: tags, Scope: scope, Active: ob.DeletedAt == nil || *ob.DeletedAt == "",
+			keepScope: ob.Scope == "personal" || project == "",
+			Category:  ob.Type, Tags: tags, Scope: scope, Active: ob.DeletedAt == nil || *ob.DeletedAt == "",
 			Created: engramTime(ob.CreatedAt), Updated: engramTime(ob.UpdatedAt)})
 	}
 	return out

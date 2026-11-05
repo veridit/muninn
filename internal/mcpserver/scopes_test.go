@@ -51,7 +51,7 @@ func TestScopeMatrixMCP(t *testing.T) {
 					t.Fatal("empty related")
 				}
 			}
-			for _, ref := range []string{f.Units["Beta"].SID, f.Units["Beta"].SID[:4], f.Units["Beta"].Key, f.Units["OtherClient"].SID} {
+			for _, ref := range f.HiddenRefs(binding) {
 				for _, tool := range []string{"memory_related", "memory_forget"} {
 					out, isErr := call(t, cs, tool, map[string]any{"id": ref})
 					if !isErr || out != "no visible memory" {
@@ -65,6 +65,7 @@ func TestScopeMatrixMCP(t *testing.T) {
 			if isErr {
 				t.Fatal(out)
 			}
+			f.CheckStats(t, binding, out)
 			f.Clean(t, binding, out)
 			if strings.Contains(out, "jcode@beta") || strings.Contains(out, "client:other") {
 				t.Fatal(out)

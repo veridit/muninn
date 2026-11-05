@@ -3,15 +3,18 @@ package app
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/veridit/muninn/internal/ingest"
+	"github.com/veridit/muninn/internal/project"
 )
 
 // Rescope is deliberately CLI-admin-only. No hook, MCP, TUI or HTTP route calls it.
 // Cross-client migration preserves the stable identity and upstream mapping.
 func (b Binding) Rescope(ctx context.Context, a *App, ref, target string, crossClient bool) (string, error) {
+	b = b.Refresh(a)
 	if b.Err != nil {
 		return "", b.Err
 	}
@@ -73,9 +76,25 @@ func (b Binding) Rescope(ctx context.Context, a *App, ref, target string, crossC
 }
 
 // MergeImport prevents imports from becoming a second boundary-crossing path.
-func (b Binding) MergeImport(path string, items []ingest.Imported, dry bool) (ingest.ImportStats, error) {
+func (b Binding) MergeImport(path string, items []ingest.Imported, dry bool, sourceDirs ...string) (ingest.ImportStats, error) {
 	if b.Err != nil {
 		return ingest.ImportStats{}, b.Err
+	}
+	client := ""
+	if len(sourceDirs) > 0 {
+		var err error
+		client, _, err = project.ClientRoot(filepath.Clean(sourceDirs[0]))
+		if err != nil {
+			return ingest.ImportStats{}, err
+		}
+	}
+	items = append([]ingest.Imported(nil), items...)
+	for i := range items {
+		if client != "" {
+			items[i].Scope = "client:" + client
+		} else if strings.HasPrefix(items[i].Scope, "client:") {
+			return ingest.ImportStats{}, fmt.Errorf("external input has no client provenance; import outside the client then use muninn rescope --cross-client")
+		}
 	}
 	mems, err := ingest.LoadNative(path)
 	if err != nil {

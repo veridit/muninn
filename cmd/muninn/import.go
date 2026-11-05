@@ -52,7 +52,7 @@ func importCmd() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					st, err := binding.MergeImport(app.NativePath(), items, dry)
+					st, err := binding.MergeImport(app.NativePath(), items, dry, filepath.Join(t.Home, "memory"))
 					if err != nil {
 						return err
 					}

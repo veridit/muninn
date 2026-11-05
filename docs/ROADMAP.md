@@ -33,6 +33,11 @@ Decided by the user on 2026-11-05. Completed items are marked below.
   It overrides `JCODE_HOME`, admits only that client's scopes, and fails closed
   with a lint-style error when invalid. Other bindings always exclude `client:*`.
   Project scopes and sync identities beneath a client root include its name.
+- [x] Non-native source paths inherit their client root at read time, including
+  markdown, project files and harness memory files. All surfaces apply the same
+  boundary without changing ids. External imports need explicit admin rescope
+  to acquire client provenance. New personal/empty-project Engram observations
+  default to personal, preserving every existing row's scope.
 - [x] Only admin CLI `rescope <id> --to <scope> --cross-client` can move owned
   memories across client boundaries. Sids and upstream mappings are retained.
   Import/sync cannot bypass the boundary, and harness files stay read-only.

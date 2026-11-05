@@ -99,12 +99,11 @@ func TestScopeMatrixCLIAndHooks(t *testing.T) {
 			for _, name := range []string{"cli.show", "cli.related"} {
 				scopetest.Pass(t, name, binding)
 			}
-			hidden := f.Units["Beta"]
 			for _, tc := range []struct {
 				name    string
 				factory func() *cobra.Command
 			}{{"cli.show", showCmd}, {"cli.related", relatedCmd}, {"cli.forget", forgetCmd}} {
-				for _, ref := range []string{hidden.SID, hidden.SID[:4], hidden.Key, f.Units["OtherClient"].SID} {
+				for _, ref := range f.HiddenRefs(binding) {
 					out, err := cliSurface(t, tc.factory(), ref)
 					if err == nil || !strings.Contains(out, "no visible memory") {
 						t.Fatalf("%s accepted hidden id: %s", tc.name, out)
@@ -116,6 +115,7 @@ func TestScopeMatrixCLIAndHooks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			f.CheckStats(t, binding, out)
 			f.Clean(t, binding, out)
 			if strings.Contains(out, "jcode@beta") || strings.Contains(out, "client:other") {
 				t.Fatal(out)
@@ -218,7 +218,7 @@ func TestScopeMatrixCLIAndHooks(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.Clean(t, binding, out)
-			if u, err := f.App.DB.Resolve(hidden.SID); err != nil || !u.Active {
+			if u, err := f.App.DB.Resolve(f.Units["Beta"].SID); err != nil || !u.Active {
 				t.Fatal("hidden memory changed")
 			}
 			scopetest.Pass(t, "cli.forget", binding)

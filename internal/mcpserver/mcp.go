@@ -84,11 +84,13 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_search", Description: "Search local memories (keyword + concept community + semantic). Use before answering questions about the user, their projects or past decisions."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, hitsOut, error) {
+			opt := opt.Refresh(a)
 			if opt.Err != nil {
 				return nil, hitsOut{}, opt.Err
 			}
 			o := a.RecallOptions()
 			o.MinScore, o.Limit, o.Scopes = 0, in.Limit, opt.Scopes
+			o.ScopeFor = opt.ScopeFor
 			if o.Limit <= 0 {
 				o.Limit = 8
 			}
@@ -129,6 +131,7 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_related", Description: "Nearest neighbours of a memory (precomputed, incremental kNN)."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in relatedIn) (*mcp.CallToolResult, hitsOut, error) {
+			opt := opt.Refresh(a)
 			if in.Limit <= 0 {
 				in.Limit = 8
 			}
@@ -140,7 +143,7 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 			if err != nil {
 				return nil, hitsOut{}, err
 			}
-			res, err := a.Searcher.RelatedIn(ctx, u.ID, in.Limit, opt.Scopes)
+			res, err := a.Searcher.RelatedIn(ctx, u.ID, in.Limit, opt.Scopes, opt.ScopeFor)
 			if err != nil {
 				return nil, hitsOut{}, err
 			}
@@ -161,10 +164,11 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 		func(ctx context.Context, _ *mcp.CallToolRequest, in struct {
 			Message string `json:"message"`
 		}) (*mcp.CallToolResult, recall.Response, error) {
+			opt := opt.Refresh(a)
 			if opt.Err != nil {
 				return nil, recall.Response{}, opt.Err
 			}
-			resp, err := a.Recall.Recall(ctx, recall.Request{Message: in.Message, Harness: "mcp", Scopes: opt.Scopes})
+			resp, err := a.Recall.Recall(ctx, recall.Request{Message: in.Message, Harness: "mcp", Scopes: opt.Scopes, ScopeFor: opt.ScopeFor})
 			if err != nil {
 				return nil, recall.Response{}, err
 			}
