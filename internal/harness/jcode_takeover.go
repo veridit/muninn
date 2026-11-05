@@ -15,7 +15,12 @@ import (
 // while muninn recalls and corrects. InstallJcodeHome therefore hands memory
 // to muninn per instance:
 //
-//   - [features] memory = false      jcode's extraction and recall stop
+//   - [features] memory = false      jcode's recall and memory features stop
+//   - [agents] memory_sidecar_enabled = false
+//                                    jcode's background extraction stops (it
+//                                    ran at session end, on disconnect and
+//                                    every 12th turn, independent of the flag
+//                                    above, and kept writing memory files)
 //   - [tools] disabled += "memory"   the model no longer sees jcode's tool
 //   - mcp.json servers.muninn        it saves through muninn's MCP tools
 //
@@ -77,6 +82,8 @@ func editJcodeMemoryTakeover(text string, install bool) (string, bool, error) {
 	changed := false
 	var c bool
 	text, c = setTOMLKey(text, "features", "memory", fmt.Sprint(!install))
+	changed = changed || c
+	text, c = setTOMLKey(text, "agents", "memory_sidecar_enabled", fmt.Sprint(!install))
 	changed = changed || c
 	var disabled []string
 	if v := getTOMLKey(text, "tools", "disabled"); v != "" {
