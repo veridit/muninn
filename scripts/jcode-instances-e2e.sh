@@ -40,6 +40,20 @@ grep -q 'post_tool_feedback = "echo keep-me"' "$root/alpha/.jcode/config.toml" &
 "$m" install jcode --jcode-home "$root/alpha/.jcode" | grep -q 'already up to date' && echo "re-install idempotent: ok"
 
 fail=0
+echo "== shell CLI and unbound Claude hook"
+got=$(JCODE_HOME="$root/alpha/.jcode" "$m" search "payment service rollout" --limit 10)
+if grep -q "Alpha deploys" <<<"$got" && ! grep -q "Beta deploys" <<<"$got"; then
+  echo "alpha cli: own memories only: ok"
+else
+  echo "alpha cli: FAIL"; echo "$got"; fail=1
+fi
+env -u JCODE_HOME "$m" remember --scope global "The payment service rollout always uses a written checklist" >/dev/null
+got=$(printf '%s\n' '{"session_id":"claude-global","prompt":"payment service rollout"}' | env -u JCODE_HOME "$m" hook claude)
+if grep -q "written checklist" <<<"$got" && ! grep -qE "Alpha deploys|Beta deploys" <<<"$got"; then
+  echo "claude hook: global memories only, no instance text: ok"
+else
+  echo "claude hook: FAIL"; echo "$got"; fail=1
+fi
 for inst in alpha beta; do
   h="$root/$inst/.jcode"
   JCODE_HOME="$h" JCODE_HOOK_SESSION_ID=s1 "$m" hook jcode
