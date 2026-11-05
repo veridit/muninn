@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -156,7 +157,9 @@ func TestScopeMatrixCLIAndHooks(t *testing.T) {
 					t.Fatal(err)
 				}
 				// Distinct sessions avoid per-session deduplication between hooks.
-				payload.WriteString(`{"session_id":"matrix-` + hook + `","prompt":"` + scopetest.Query + `","cwd":"` + cwd + `"}`)
+				// Encode properly: Windows paths contain backslashes.
+				raw, _ := json.Marshal(map[string]string{"session_id": "matrix-" + hook, "prompt": scopetest.Query, "cwd": cwd})
+				payload.Write(raw)
 				payload.Seek(0, 0)
 				prev := os.Stdin
 				os.Stdin = payload

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -120,7 +121,9 @@ func key(c Config) (string, error) {
 	}
 	defer f.Close()
 	info, err := f.Stat()
-	if err != nil || info.Mode().Perm()&0077 != 0 {
+	// Windows has no Unix mode bits (Go reports 0666 for every file); access
+	// there is governed by ACLs on the user's profile directory instead.
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) {
 		return "", errors.New("extraction env file must be private (0600)")
 	}
 	sc := bufio.NewScanner(io.LimitReader(f, 1<<20))

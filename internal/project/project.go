@@ -47,7 +47,13 @@ func Find(dir string, create bool) (Project, error) {
 	}
 	p, err := find(dir, false)
 	if err == nil {
-		rel, e := filepath.Rel(root, p.Root)
+		// root is physical (ClientRoot resolves symlinks); compare physical
+		// paths too, or /tmp -> /private/tmp style links hide the project.
+		pr := p.Root
+		if phys, e := filepath.EvalSymlinks(pr); e == nil {
+			pr = phys
+		}
+		rel, e := filepath.Rel(root, pr)
 		if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			err = ErrNoProject
 		}

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -117,6 +118,9 @@ func TestPrivateEnvFile(t *testing.T) {
 	}
 	if os.Getenv(c.APIKeyEnv) != "" {
 		t.Fatal("mutated environment")
+	}
+	if runtime.GOOS == "windows" {
+		return // no Unix mode bits to reject
 	}
 	os.Chmod(c.EnvFile, 0644)
 	if _, err := key(c); err == nil {
