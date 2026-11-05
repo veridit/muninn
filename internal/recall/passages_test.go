@@ -304,7 +304,7 @@ func TestStrongOnePassageIsNotAveraged(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := []float32{1, 0}
-	if err = e.DB.PutEmbedding(u.ContentHash, index.PipelineHash(e.Searcher.Embedder.Model()), 2, embed.EncodeF32(v), nil, embed.Sketch(v)); err != nil {
+	if err = e.DB.PutEmbedding(u.ContentHash, index.PipelineHash(e.Searcher.Embedder.Model()), 2, embed.EncodeF32(v), []byte{1, 0}, embed.Sketch(v)); err != nil {
 		t.Fatal(err)
 	}
 	message := "distinctive query with no lexical overlap\n\n" + strings.Repeat("generic unfamiliar prose ", 40)
