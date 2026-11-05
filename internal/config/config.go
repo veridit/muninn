@@ -11,10 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/veridit/muninn/internal/extract"
 )
 
 // Config is the user-editable settings file (config.json in ConfigDir).
 type Config struct {
+	Extract extract.Config `json:"extract"`
 	// Embedder selects the embedding provider: "auto" (default: Ollama when
 	// it answers and has EmbedModel, else the built-in model once
 	// downloaded), "builtin", "ollama", or "none" (keyword-only).
@@ -59,6 +62,7 @@ type Config struct {
 // Defaults returns the built-in configuration.
 func Defaults() Config {
 	return Config{
+		Extract:                extract.Defaults(),
 		Embedder:               "auto",
 		OllamaURL:              "http://127.0.0.1:11434",
 		EmbedModel:             "nomic-embed-text",

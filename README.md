@@ -113,6 +113,15 @@ explicitly with `"embedder": "builtin" | "ollama" | "none"` in the config;
 `muninn model status` shows what is in use. Without any model, muninn falls
 back to keyword and concept matching.
 
+## Automatic capture
+
+`muninn capture --session <id>` extracts durable memories from stdin, or use
+`--harness jcode` to read a jcode session. Capture defaults to a configurable
+remote DeepSeek Flash chat model, with Ollama and `off` alternatives. It reuses
+the same client/instance binding as recall. `--dry-run` shows proposed actions
+without saving. Lifecycle hooks are opt-in and are not installed automatically.
+See [capture configuration, privacy and hook wiring](docs/CAPTURE.md).
+
 ## Use
 
 ```sh

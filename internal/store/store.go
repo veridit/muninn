@@ -38,6 +38,17 @@ type DB struct {
 }
 
 const schema = `
+CREATE TABLE IF NOT EXISTS capture_bindings (session TEXT PRIMARY KEY, scope TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS capture_seen (
+ session TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(session,message)
+);
+CREATE TABLE IF NOT EXISTS capture_state (
+ session TEXT PRIMARY KEY, high_water INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS capture_lock (id INTEGER PRIMARY KEY, token TEXT NOT NULL, expires_ns INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS capture_reinforcements (
+ event TEXT PRIMARY KEY, sid TEXT NOT NULL, at_ns INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sources (
   id INTEGER PRIMARY KEY,
