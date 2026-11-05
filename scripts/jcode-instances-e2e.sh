@@ -4,7 +4,8 @@
 # as each instance would and check that every injection stays in-instance.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-root=$(mktemp -d "${TMPDIR:-/tmp}/muninn-instances.XXXXXX")
+tmp="${TMPDIR:-/tmp}"
+root=$(mktemp -d "${tmp%/}/muninn-instances.XXXXXX") # macOS TMPDIR ends in '/'
 trap 'rm -rf "$root"' EXIT
 export MUNINN_HOME="$root/muninn"
 go build -o bin/muninn ./cmd/muninn

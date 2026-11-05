@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -182,24 +183,31 @@ func TestScopeMatrixCLIAndHooks(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := os.WriteFile(filepath.Join(home, "sessions", "matrix-jcode.json"), []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"`+scopetest.Query+`"}]}]}`), 0600); err != nil {
-				t.Fatal(err)
+			// The jcode hook step drives a /bin/sh stub as the instance's jcode
+			// binary; Windows cannot run it. Every other surface still runs there.
+			jcodeHook := func() {
+				if err := os.WriteFile(filepath.Join(home, "sessions", "matrix-jcode.json"), []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"`+scopetest.Query+`"}]}]}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(home, "bin", "jcode"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$JCODE_HOME/injected\"\n"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("JCODE_HOME", home)
+				t.Setenv("JCODE_HOOK_SESSION_ID", "matrix-jcode")
+				t.Setenv("JCODE_HOOK_CWD", cwd)
+				if err := runHook("jcode", 5*time.Second); err != nil {
+					t.Fatal(err)
+				}
+				injected, err := os.ReadFile(filepath.Join(home, "injected"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.Read(t, binding, string(injected))
+				scopetest.Pass(t, "hook.jcode", binding)
 			}
-			if err := os.WriteFile(filepath.Join(home, "bin", "jcode"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$JCODE_HOME/injected\"\n"), 0700); err != nil {
-				t.Fatal(err)
+			if runtime.GOOS != "windows" {
+				jcodeHook()
 			}
-			t.Setenv("JCODE_HOME", home)
-			t.Setenv("JCODE_HOOK_SESSION_ID", "matrix-jcode")
-			t.Setenv("JCODE_HOOK_CWD", cwd)
-			if err := runHook("jcode", 5*time.Second); err != nil {
-				t.Fatal(err)
-			}
-			injected, err := os.ReadFile(filepath.Join(home, "injected"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			f.Read(t, binding, string(injected))
-			scopetest.Pass(t, "hook.jcode", binding)
 
 			for _, args := range [][]string{{scopetest.Query, "--all", "--limit", "30"}, {scopetest.Query, "--scope", "client:*", "--limit", "30"}} {
 				out, err := cliSurface(t, searchCmd(), args...)
