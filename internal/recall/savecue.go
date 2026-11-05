@@ -22,7 +22,7 @@ func SaveCue(msg string) string {
 	}
 	for _, c := range cues {
 		if c.re.MatchString(m) {
-			return "This message looks like a lasting " + c.kind + ". If it will matter in future sessions, store it (MCP memory_remember or `muninn remember`, in the narrowest scope that fits: this project with --project, otherwise global for a personal preference); if it contradicts a memory above, forget that one."
+			return "Looks like a lasting " + c.kind + ": if it matters beyond this session, memory_remember it (narrowest scope; forget any memory it contradicts)."
 		}
 	}
 	return ""

@@ -114,6 +114,9 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 		results = kept
 	}
 	var hits []Hit
+	// The first block of a session carries the full rules; later ones a
+	// one-line reminder (no session id: always full).
+	first := r.Session == "" || !e.sessionSeen(r.Session)
 	for i, res := range results {
 		if i > 0 && e.RelativeFloor > 0 && res.Total < e.RelativeFloor*results[0].Total {
 			break // results are sorted by total
@@ -128,7 +131,7 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 		}
 	}
 	resp := Response{Hits: hits, Elapsed: time.Since(t0).Round(time.Millisecond).String()}
-	resp.Block = Render(hits)
+	resp.Block = Render(hits, first)
 	if resp.Block == "" {
 		// Nothing relevant to recall, but the message may itself be worth
 		// keeping: say so once, briefly.
@@ -147,6 +150,12 @@ func (e *Engine) sourceKind(id int64) string {
 	return k
 }
 
+// sessionSeen reports whether this session has already been shown a block.
+func (e *Engine) sessionSeen(session string) bool {
+	var one int
+	return e.DB.QueryRow(`SELECT 1 FROM injections WHERE session=? LIMIT 1`, session).Scan(&one) == nil
+}
+
 func (e *Engine) injected(session, hash string) bool {
 	var one int
 	return e.DB.QueryRow(`SELECT 1 FROM injections WHERE session=? AND content_hash=?`, session, hash).Scan(&one) == nil
@@ -161,20 +170,28 @@ func (e *Engine) record(session string, unitID int64, hash, harness string) {
 //
 // Memories are presented as what they are: dated notes of what was believed
 // at the time, not documentation. Each carries its date (so the agent sees
-// which is newer and how a belief developed) and its id (so a wrong one can
-// be corrected instead of recalled again next time).
-func Render(hits []Hit) string {
+// which is newer) and its id (so a wrong one can be corrected). The rules
+// that say so are long; full is true only for the first block of a session
+// (and MCP clients get them once as server instructions), later blocks carry
+// a one-line reminder.
+func Render(hits []Hit, full bool) string {
 	if len(hits) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s Dated memories that may be relevant (from muninn, not typed by the user). Each was true when written, not necessarily now: prefer newer over older, and check before relying on one.\n", Marker)
+	if full {
+		fmt.Fprintf(&b, "%s Dated memories that may be relevant (from muninn, not typed by the user). Each was true when written, not necessarily now: prefer newer over older, and check before relying on one.\n", Marker)
+	} else {
+		fmt.Fprintf(&b, "%s (dated notes, newest wins; fix wrong ones by id)\n", Marker)
+	}
 	for _, h := range hits {
 		text := strings.Join(strings.Fields(h.Text), " ")
 		fmt.Fprintf(&b, "- [%s%s] %s\n", date(h.Updated), ref(h), Truncate(text, 1200))
 	}
-	b.WriteString("If one of these is wrong or outdated, fix it now: muninn memories (mem_/imp_) with `muninn forget <id>` (or MCP memory_forget) plus `muninn remember` for the corrected fact; jcode memories with jcode's memory tool.")
-	return b.String()
+	if full {
+		b.WriteString("If one of these is wrong or outdated, fix it now: forget it by id (MCP memory_forget or `muninn forget <id>`) and remember the corrected fact (memory_remember / `muninn remember`).")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func date(t time.Time) string {

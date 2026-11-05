@@ -183,17 +183,45 @@ func InstallJcodeHome(jcodeHome, label, bin string, install, dry bool) (InstallR
 	}
 	cmd := bin + " hook jcode"
 	text, changed, err := editJcodeTurnStart(string(b), cmd, install)
-	if err != nil || !changed {
+	if err != nil {
 		return res, err
 	}
-	res.Changed = true
-	if res.Backup, err = backup(path, dry); err != nil {
+	text2, changed2, err := editJcodeMemoryTakeover(text, install)
+	if err != nil {
 		return res, err
 	}
-	if dry {
-		return res, nil
+	if changed2 {
+		text, changed = text2, true
+		if install {
+			res.Note = "jcode's own memory off; "
+		} else {
+			res.Note = "jcode's own memory back on; "
+		}
 	}
-	return res, writeAtomic(path, []byte(text))
+	if changed {
+		res.Changed = true
+		if res.Backup, err = backup(path, dry); err != nil {
+			return res, err
+		}
+		if !dry {
+			if err := writeAtomic(path, []byte(text)); err != nil {
+				return res, err
+			}
+		}
+	}
+	// MCP: the model saves and corrects through muninn's tools instead.
+	notes, err := takeOverJcodeMemory(jcodeHome, bin, install, dry)
+	if err != nil {
+		return res, err
+	}
+	for _, n := range notes {
+		if strings.Contains(n, "mcp.json") {
+			res.Changed = true
+			res.Note += n + "; "
+		}
+	}
+	res.Note = strings.TrimSuffix(res.Note, "; ")
+	return res, nil
 }
 
 const jcodeMarker = "# muninn: automatic local memory recall"

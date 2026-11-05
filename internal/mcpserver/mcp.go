@@ -59,9 +59,17 @@ func text(v any) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(b)}}}
 }
 
+// Instructions are sent once per MCP session (server instructions), so the
+// per-message recall block can stay short.
+const Instructions = `muninn is your long-term memory (local, private).
+
+Recalled memories arrive in blocks marked [muninn recall], tagged [date id]. A memory is a dated note of what was believed when it was written, not documentation: prefer newer over older and check before relying on one. If one is wrong or outdated, fix it now: memory_forget its id, then memory_remember the corrected fact.
+
+Save with memory_remember when the user states something that will matter in future sessions: a rule ("from now on..."), a preference, a decision, or a correction. One fact per memory, in the narrowest scope that fits. Never store secrets.`
+
 // New builds the MCP server over an opened app.
 func New(a *app.App, version string) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "muninn", Version: version}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "muninn", Version: version}, &mcp.ServerOptions{Instructions: Instructions})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_search", Description: "Search local memories (keyword + concept community + semantic). Use before answering questions about the user, their projects or past decisions."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, hitsOut, error) {
@@ -85,7 +93,7 @@ func New(a *app.App, version string) *mcp.Server {
 			return text(out), out, nil
 		})
 
-	mcp.AddTool(s, &mcp.Tool{Name: "memory_remember", Description: "Store a durable memory (fact, preference, correction). Never store secrets."},
+	mcp.AddTool(s, &mcp.Tool{Name: "memory_remember", Description: "Store a durable memory: a rule, preference, decision or correction the user stated that will matter in future sessions. One fact per call. Never store secrets."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in rememberIn) (*mcp.CallToolResult, idOut, error) {
 			if in.Category == "" {
 				in.Category = "fact"
@@ -101,7 +109,7 @@ func New(a *app.App, version string) *mcp.Server {
 			return text(out), out, nil
 		})
 
-	mcp.AddTool(s, &mcp.Tool{Name: "memory_forget", Description: "Deactivate a muninn memory by id."},
+	mcp.AddTool(s, &mcp.Tool{Name: "memory_forget", Description: "Retire a wrong or outdated muninn memory by its id (mem_... or imp_..., as shown in [muninn recall]). Follow with memory_remember for the corrected fact."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in forgetIn) (*mcp.CallToolResult, idOut, error) {
 			ok, err := ingest.Forget(app.NativePath(), in.ID)
 			if err != nil {
