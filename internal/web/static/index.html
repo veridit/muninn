@@ -83,8 +83,8 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
 
 function card(r) {
   return `<div class="card"><div>${esc(r.text)}</div>
-    <div class="meta"><span>#${r.id}</span><span>${esc(r.kind)}</span><span>${esc(r.scope)}</span><span>score ${r.score.toFixed(2)}</span>
-    <a class="link" onclick="related(${r.id})">related</a>${r.forgettable ? ` <a class="link" onclick="forget('${esc(r.key)}')">forget</a>` : ''}</div>
+    <div class="meta"><span>${esc(r.id)}</span><span>${esc(r.kind)}</span><span>${esc(r.scope)}</span><span>score ${r.score.toFixed(2)}</span>
+    <a class="link" onclick="related('${esc(r.id)}')">related</a>${r.forgettable ? ` <a class="link" onclick="forget('${esc(r.id)}')">forget</a>` : ''}</div>
     ${r.why ? `<div class="why">${esc(r.why)}</div>` : ''}</div>`;
 }
 let timer;
@@ -98,11 +98,12 @@ $('#q').oninput = () => { clearTimeout(timer); timer = setTimeout(search, 150); 
 $('#explain').onchange = search;
 async function related(id) {
   const d = await api(`/api/related?id=${id}`);
-  $('#results').innerHTML = `<div class="meta">neighbours of #${id}</div>` + (d.results.map(card).join('') || '<div class="meta">none</div>');
+  $('#results').innerHTML = `<div class="meta">neighbours of ${esc(id)}</div>` + (d.results.map(card).join('') || '<div class="meta">none</div>');
 }
 async function forget(key) {
   if (!confirm('Forget this memory?')) return;
-  await api('/api/forget', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:key})});
+  const out = await api('/api/forget', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:key})});
+  $('#status').textContent = out.message;
   search();
 }
 $('#rgo').onclick = async () => {

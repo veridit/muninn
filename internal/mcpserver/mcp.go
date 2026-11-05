@@ -21,7 +21,7 @@ type searchIn struct {
 }
 
 type hit struct {
-	ID    int64   `json:"id"`
+	ID    string  `json:"id"`
 	Text  string  `json:"text"`
 	Kind  string  `json:"kind"`
 	Scope string  `json:"scope"`
@@ -43,15 +43,18 @@ type rememberIn struct {
 type idOut struct {
 	ID         string `json:"id"`
 	Reinforced bool   `json:"reinforced,omitempty"`
+	Suppressed bool   `json:"suppressed,omitempty"`
+	Message    string `json:"message,omitempty"`
 }
 
 type forgetIn struct {
-	ID string `json:"id" jsonschema:"muninn memory id (mem_...)"`
+	ID string `json:"id" jsonschema:"short memory id, unique prefix (4+ chars), or legacy id"`
 }
 
 type relatedIn struct {
-	UnitID int64 `json:"unit_id" jsonschema:"id from a search result"`
-	Limit  int   `json:"limit,omitempty"`
+	ID     string `json:"id,omitempty" jsonschema:"short memory id, unique prefix (4+ chars), or legacy id"`
+	UnitID int64  `json:"unit_id,omitempty" jsonschema:"legacy numeric row id (prefer id)"`
+	Limit  int    `json:"limit,omitempty"`
 }
 
 func text(v any) *mcp.CallToolResult {
@@ -63,7 +66,7 @@ func text(v any) *mcp.CallToolResult {
 // per-message recall block can stay short.
 const Instructions = `muninn is your long-term memory (local, private).
 
-Recalled memories arrive in blocks marked [muninn recall], tagged [date id]. A memory is a dated note of what was believed when it was written, not documentation: prefer newer over older and check before relying on one. If one is wrong or outdated, fix it now: memory_forget its id, then memory_remember the corrected fact.
+Recalled memories are dated notes, not documentation, tagged [date short-id] in [muninn recall] blocks. Prefer newer notes and verify before relying. Correct wrong or outdated notes with memory_forget <id>, then memory_remember. Ids accept a unique prefix of at least four characters or a legacy id. Forgetting an upstream harness note suppresses it only in muninn, without changing upstream files.
 
 Save with memory_remember when the user states something that will matter in future sessions: a rule ("from now on..."), a preference, a decision, or a correction. One fact per memory, in the narrowest scope that fits. Never store secrets.`
 
@@ -103,7 +106,7 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 			}
 			out := hitsOut{Results: []hit{}}
 			for _, r := range res {
-				h := hit{ID: r.Unit.ID, Text: r.Unit.Body, Kind: r.Unit.Kind, Scope: r.Unit.Scope, Score: r.Total}
+				h := hit{ID: r.Unit.SID, Text: r.Unit.Body, Kind: r.Unit.Kind, Scope: r.Unit.Scope, Score: r.Total}
 				if in.Explain {
 					h.Why = r.Explain()
 				}
@@ -130,38 +133,29 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 			if _, err := a.Reindex(ctx); err != nil {
 				return nil, idOut{}, err
 			}
-			out := idOut{ID: m.ID, Reinforced: re}
-			return text(out), out, nil
-		})
-
-	mcp.AddTool(s, &mcp.Tool{Name: "memory_forget", Description: "Retire a wrong or outdated muninn memory by its id (mem_... or imp_..., as shown in [muninn recall]). Follow with memory_remember for the corrected fact."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in forgetIn) (*mcp.CallToolResult, idOut, error) {
-			if len(opt.Scopes) > 0 {
-				mems, err := ingest.LoadNative(app.NativePath())
-				if err != nil {
-					return nil, idOut{}, err
-				}
-				visible := false
-				for _, m := range mems {
-					if m.ID == in.ID && opt.allowed(m.Scope) {
-						visible = true
-					}
-				}
-				if !visible {
-					return nil, idOut{}, fmt.Errorf("no active muninn memory %q", in.ID)
-				}
-			}
-			ok, err := ingest.Forget(app.NativePath(), in.ID)
+			u, err := a.DB.Resolve(m.ID)
 			if err != nil {
 				return nil, idOut{}, err
 			}
-			if !ok {
-				return nil, idOut{}, fmt.Errorf("no active muninn memory %q", in.ID)
-			}
-			if _, err := a.Reindex(ctx); err != nil {
+			out := idOut{ID: u.SID, Reinforced: re}
+			return text(out), out, nil
+		})
+
+	mcp.AddTool(s, &mcp.Tool{Name: "memory_forget", Description: "Retire a wrong or outdated memory by short id, unique prefix (4+ chars), or legacy id. Upstream harness notes are suppressed only in muninn, leaving upstream files unchanged. Follow with memory_remember for the correction."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, in forgetIn) (*mcp.CallToolResult, idOut, error) {
+			u, err := a.DB.Resolve(in.ID)
+			if err != nil {
 				return nil, idOut{}, err
 			}
-			return text(idOut{ID: in.ID}), idOut{ID: in.ID}, nil
+			if !opt.allowed(u.Scope) {
+				return nil, idOut{}, fmt.Errorf("no visible memory %q", in.ID)
+			}
+			result, err := a.Forget(ctx, in.ID)
+			if err != nil {
+				return nil, idOut{}, err
+			}
+			out := idOut{ID: result.ID, Suppressed: result.Suppressed, Message: result.Message}
+			return text(out), out, nil
 		})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_related", Description: "Nearest neighbours of a memory (precomputed, incremental kNN)."},
@@ -169,13 +163,25 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 			if in.Limit <= 0 {
 				in.Limit = 8
 			}
-			res, err := a.Searcher.RelatedIn(ctx, in.UnitID, in.Limit, opt.Scopes)
+			ref := in.ID
+			if ref == "" {
+				ref = fmt.Sprint(in.UnitID)
+			}
+			u, err := a.DB.Resolve(ref)
+			if err != nil {
+				return nil, hitsOut{}, err
+			}
+			if !opt.allowed(u.Scope) {
+				out := hitsOut{Results: []hit{}}
+				return text(out), out, nil
+			}
+			res, err := a.Searcher.RelatedIn(ctx, u.ID, in.Limit, opt.Scopes)
 			if err != nil {
 				return nil, hitsOut{}, err
 			}
 			out := hitsOut{Results: []hit{}}
 			for _, r := range res {
-				out.Results = append(out.Results, hit{ID: r.Unit.ID, Text: r.Unit.Body, Kind: r.Unit.Kind, Scope: r.Unit.Scope, Score: r.Total})
+				out.Results = append(out.Results, hit{ID: r.Unit.SID, Text: r.Unit.Body, Kind: r.Unit.Kind, Scope: r.Unit.Scope, Score: r.Total})
 			}
 			return text(out), out, nil
 		})

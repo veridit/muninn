@@ -30,6 +30,7 @@ type Request struct {
 
 // Hit is one recalled memory.
 type Hit struct {
+	SID    string  `json:"sid"`
 	UnitID int64   `json:"id"`
 	Key    string  `json:"key"`    // id within its source: mem_/imp_ for muninn, the jcode memory id, ...
 	Source string  `json:"source"` // native | jcode | markdown
@@ -124,7 +125,7 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 		if r.Session != "" && e.injected(r.Session, res.Unit.ContentHash) {
 			continue
 		}
-		hits = append(hits, Hit{UnitID: res.Unit.ID, Key: res.Unit.Key, Source: e.sourceKind(res.Unit.SourceID), Text: res.Unit.Body, Kind: res.Unit.Kind,
+		hits = append(hits, Hit{SID: res.Unit.SID, UnitID: res.Unit.ID, Key: res.Unit.Key, Source: e.sourceKind(res.Unit.SourceID), Text: res.Unit.Body, Kind: res.Unit.Kind,
 			Scope: res.Unit.Scope, Score: res.Total, Why: res.Explain(), Updated: res.Unit.Updated})
 		if r.Session != "" {
 			e.record(r.Session, res.Unit.ID, res.Unit.ContentHash, r.Harness)
@@ -180,16 +181,16 @@ func Render(hits []Hit, full bool) string {
 	}
 	var b strings.Builder
 	if full {
-		fmt.Fprintf(&b, "%s Dated memories that may be relevant (from muninn, not typed by the user). Each was true when written, not necessarily now: prefer newer over older, and check before relying on one.\n", Marker)
+		fmt.Fprintf(&b, "%s Dated notes from muninn, not the user. Prefer newer. Verify before relying.\n", Marker)
 	} else {
-		fmt.Fprintf(&b, "%s (dated notes, newest wins; fix wrong ones by id)\n", Marker)
+		fmt.Fprintf(&b, "%s Dated notes. Prefer newer. Verify.\n", Marker)
 	}
 	for _, h := range hits {
 		text := strings.Join(strings.Fields(h.Text), " ")
 		fmt.Fprintf(&b, "- [%s%s] %s\n", date(h.Updated), ref(h), Truncate(text, 1200))
 	}
 	if full {
-		b.WriteString("If one of these is wrong or outdated, fix it now: forget it by id (MCP memory_forget or `muninn forget <id>`) and remember the corrected fact (memory_remember / `muninn remember`).")
+		b.WriteString("Wrong or outdated? memory_forget <id>, then memory_remember the correction (CLI: muninn forget <id> then muninn remember).")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -202,6 +203,9 @@ func date(t time.Time) string {
 }
 
 func ref(h Hit) string {
+	if h.SID != "" {
+		return h.SID
+	}
 	switch h.Source {
 	case "native":
 		return h.Key

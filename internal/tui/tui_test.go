@@ -104,7 +104,7 @@ func TestTUISearchRecallExplainAndForget(t *testing.T) {
 	// Back to search, forget the selected muninn memory.
 	tm = drive(t, tm, tea.KeyMsg{Type: tea.KeyTab})
 	tm = drive(t, tm, tea.KeyMsg{Type: tea.KeyCtrlD})
-	if !strings.Contains(tm.View(), "forgot mem_") {
+	if !strings.Contains(tm.View(), "forgot ") {
 		t.Fatalf("forget:\n%s", tm.View())
 	}
 	if strings.Contains(tm.View(), "Bake banana cake") {

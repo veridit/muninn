@@ -153,6 +153,35 @@ func TestMCPScopedToInstance(t *testing.T) {
 	if s := scopesOf(t, out); len(s) != 0 {
 		t.Fatalf("related leaked through beta id: %v", s)
 	}
+	beta, err := a.DB.GetUnit(betaUnit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{beta.SID, beta.SID[:4], beta.Key} {
+		out, _ = call(t, cs, "memory_related", map[string]any{"id": ref})
+		if s := scopesOf(t, out); len(s) != 0 {
+			t.Fatalf("related leaked through %q: %v", ref, s)
+		}
+		if out, isErr := call(t, cs, "memory_forget", map[string]any{"id": ref}); !isErr {
+			t.Fatalf("alpha forgot beta via %q: %s", ref, out)
+		}
+	}
+}
+
+func TestMCPForgetsByShortPrefix(t *testing.T) {
+	a, ids := testApp(t)
+	cs := connect(t, a, Options{})
+	u, err := a.DB.Resolve(ids["jcode@alpha"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, isErr := call(t, cs, "memory_forget", map[string]any{"id": u.SID[:4]}); isErr {
+		t.Fatal(out)
+	}
+	u, err = a.DB.Resolve(u.Key)
+	if err != nil || u.Active {
+		t.Fatalf("not forgotten: %+v %v", u, err)
+	}
 }
 
 func TestMCPUnrestrictedWithoutInstance(t *testing.T) {

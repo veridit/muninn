@@ -40,13 +40,13 @@ func TestSaveCue(t *testing.T) {
 }
 
 func TestRenderCarriesIDsAndFixRule(t *testing.T) {
-	hits := []Hit{{Key: "mem_1a2b", Source: "native", Text: "Uses tabs", Updated: time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)}, {Key: "abc-123", Source: "jcode", Text: "Port 8443"}}
+	hits := []Hit{{SID: "k7m2qx", Key: "mem_1a2b", Source: "native", Text: "Uses tabs", Updated: time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)}, {SID: "abc123", Key: "abc-123", Source: "jcode", Text: "Port 8443"}}
 	b := Render(hits, true)
 	short := Render(hits, false)
-	if len(short) >= len(b) || !strings.Contains(short, "- [2026-03-01 mem_1a2b] Uses tabs") || !IsOwnOutput(short) {
+	if len(short) >= len(b) || !strings.Contains(short, "- [2026-03-01 k7m2qx] Uses tabs") || !IsOwnOutput(short) {
 		t.Fatalf("short block wrong:\n%s", short)
 	}
-	for _, want := range []string{"- [2026-03-01 mem_1a2b] Uses tabs", "- [jcode:abc-123] Port 8443", "muninn forget <id>", "prefer newer over older"} {
+	for _, want := range []string{"- [2026-03-01 k7m2qx] Uses tabs", "- [abc123] Port 8443", "muninn forget <id>", "Prefer newer"} {
 		if !contains(b, want) {
 			t.Errorf("block missing %q:\n%s", want, b)
 		}

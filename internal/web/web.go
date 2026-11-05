@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,7 +31,7 @@ type Server struct {
 }
 
 type apiHit struct {
-	ID          int64   `json:"id"`
+	ID          string  `json:"id"`
 	Key         string  `json:"key"`
 	Text        string  `json:"text"`
 	Kind        string  `json:"kind"`
@@ -45,8 +44,8 @@ type apiHit struct {
 func (s *Server) hits(res []search.Result, explain bool) []apiHit {
 	out := []apiHit{}
 	for _, r := range res {
-		h := apiHit{ID: r.Unit.ID, Key: r.Unit.Key, Text: r.Unit.Body, Kind: r.Unit.Kind, Scope: r.Unit.Scope,
-			Score: r.Total, Forgettable: strings.HasPrefix(r.Unit.Key, "mem_") && s.isNative(r.Unit.SourceID)}
+		h := apiHit{ID: r.Unit.SID, Key: r.Unit.Key, Text: r.Unit.Body, Kind: r.Unit.Kind, Scope: r.Unit.Scope,
+			Score: r.Total, Forgettable: true}
 		if explain {
 			h.Why = r.Explain()
 		}
@@ -85,8 +84,12 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, map[string]any{"results": s.hits(res, r.URL.Query().Get("explain") == "1")})
 	})
 	mux.HandleFunc("GET /api/related", func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
-		res, err := s.App.Searcher.Related(r.Context(), id, 10)
+		u, err := s.App.DB.Resolve(r.URL.Query().Get("id"))
+		if err != nil {
+			fail(w, 404, err)
+			return
+		}
+		res, err := s.App.Searcher.Related(r.Context(), u.ID, 10)
 		if err != nil {
 			fail(w, 500, err)
 			return
@@ -128,7 +131,12 @@ func (s *Server) Handler() http.Handler {
 			fail(w, 500, err)
 			return
 		}
-		writeJSON(w, map[string]any{"id": m.ID, "reinforced": re})
+		u, err := s.App.DB.Resolve(m.ID)
+		if err != nil {
+			fail(w, 500, err)
+			return
+		}
+		writeJSON(w, map[string]any{"id": u.SID, "reinforced": re})
 	})
 	mux.HandleFunc("POST /api/forget", func(w http.ResponseWriter, r *http.Request) {
 		var in struct{ ID string }
@@ -138,13 +146,12 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.Mu.Lock()
 		defer s.Mu.Unlock()
-		ok, err := ingest.Forget(app.NativePath(), in.ID)
-		if err != nil || !ok {
-			fail(w, 404, errors.New("no such muninn memory"))
+		out, err := s.App.Forget(r.Context(), in.ID)
+		if err != nil {
+			fail(w, 404, err)
 			return
 		}
-		s.App.Reindex(r.Context())
-		writeJSON(w, map[string]any{"ok": true})
+		writeJSON(w, out)
 	})
 	mux.HandleFunc("GET /api/injections", func(w http.ResponseWriter, r *http.Request) {
 		rows, err := s.App.DB.QueryContext(r.Context(), `SELECT i.session, i.harness, i.at_ns, COALESCE(u.body,'') FROM injections i

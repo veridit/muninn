@@ -11,7 +11,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/veridit/muninn/internal/app"
-	"github.com/veridit/muninn/internal/ingest"
 	"github.com/veridit/muninn/internal/recall"
 	"github.com/veridit/muninn/internal/search"
 )
@@ -120,20 +119,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+r":
 			if m.cursor < len(m.results) {
-				id := m.results[m.cursor].Unit.ID
+				u, err := m.a.DB.Resolve(m.results[m.cursor].Unit.SID)
+				if err != nil {
+					m.status = err.Error()
+					return m, nil
+				}
+				id := u.ID
 				res, err := m.a.Searcher.Related(context.Background(), id, 15)
 				if err == nil {
 					m.results, m.cursor = res, 0
-					m.status = fmt.Sprintf("neighbours of #%d", id)
+					m.status = "neighbours of " + u.SID
 				}
 			}
 			return m, nil
 		case "ctrl+d":
 			if m.cursor < len(m.results) {
 				u := m.results[m.cursor].Unit
-				if ok, err := ingest.Forget(app.NativePath(), u.Key); err == nil && ok {
-					m.a.Reindex(context.Background())
-					note := "forgot " + u.Key
+				if out, err := m.a.Forget(context.Background(), u.SID); err == nil {
+					note := out.Message
 					run := m.run()
 					return m, func() tea.Msg {
 						r := run().(resultsMsg)
@@ -141,7 +144,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return r
 					}
 				}
-				m.status = "only muninn memories can be forgotten here"
+				m.status = "could not forget memory"
 			}
 			return m, nil
 		}
@@ -176,7 +179,7 @@ func (m model) View() string {
 		}
 		for i := start; i < len(m.results) && i < start+rows; i++ {
 			r := m.results[i]
-			line := fmt.Sprintf("%6.2f  %s", r.Total, strings.Join(strings.Fields(r.Unit.Body), " "))
+			line := fmt.Sprintf("[%s] %6.2f  %s", r.Unit.SID, r.Total, strings.Join(strings.Fields(r.Unit.Body), " "))
 			if m.explain {
 				line += "  \x1b[2m" + r.Explain() + "\x1b[0m"
 			}

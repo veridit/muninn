@@ -33,7 +33,7 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(versionCmd(), indexCmd(), searchCmd(), recallCmd(), rememberCmd(), forgetCmd(),
+	root.AddCommand(versionCmd(), indexCmd(), searchCmd(), recallCmd(), rememberCmd(), forgetCmd(), showCmd(),
 		listCmd(), relatedCmd(), statsCmd(), gcCmd(), hookCmd(), serveCmd(), mcpCmd(), tuiCmd(),
 		installCmd(), uninstallCmd(), configCmd(), jcodeCmd(), importCmd(), projectCmd(), syncCmd(), modelCmd())
 	if p := os.Getenv("MUNINN_CPUPROFILE"); p != "" {
@@ -89,9 +89,9 @@ func printResults(res []search.Result, explain bool) {
 	}
 	for _, r := range res {
 		body := strings.Join(strings.Fields(r.Unit.Body), " ")
-		fmt.Printf("[%d] %s (%s, %s) score %.2f\n", r.Unit.ID, recall.Truncate(body, 300), r.Unit.Kind, r.Unit.Scope, r.Total)
+		fmt.Printf("[%s] %s (%s, %s) score %.2f\n", r.Unit.SID, recall.Truncate(body, 300), r.Unit.Kind, r.Unit.Scope, r.Total)
 		if explain {
-			fmt.Println("    ", r.Explain())
+			fmt.Println("    ", r.Explain(), "origin:", r.Unit.Origin)
 		}
 	}
 }
@@ -196,12 +196,21 @@ func rememberCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if reinforced {
-				fmt.Printf("reinforced %s (strength %d)\n", m.ID, m.Strength)
-			} else {
-				fmt.Println("remembered", m.ID)
-			}
-			return withApp(func(ctx context.Context, a *app.App) error { _, err := a.Reindex(ctx); return err })
+			return withApp(func(ctx context.Context, a *app.App) error {
+				if _, err := a.Reindex(ctx); err != nil {
+					return err
+				}
+				u, err := a.DB.Resolve(m.ID)
+				if err != nil {
+					return err
+				}
+				if reinforced {
+					fmt.Printf("reinforced %s (strength %d)\n", u.SID, m.Strength)
+				} else {
+					fmt.Println("remembered", u.SID)
+				}
+				return nil
+			})
 		}}
 	c.Flags().StringVar(&category, "category", "fact", "fact | preference | correction | entity")
 	c.Flags().StringVar(&scope, "scope", "global", "global or a project name")
@@ -211,34 +220,52 @@ func rememberCmd() *cobra.Command {
 }
 
 func forgetCmd() *cobra.Command {
-	return &cobra.Command{Use: "forget <memory-id>", Short: "Deactivate a muninn memory", Args: cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			ok, err := ingest.Forget(app.NativePath(), args[0])
+	return &cobra.Command{Use: "forget <memory-id>", Short: "Retire a memory or suppress an upstream memory locally", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		return withApp(func(ctx context.Context, a *app.App) error {
+			if _, err := a.Reindex(ctx); err != nil {
+				return err
+			}
+			out, err := a.Forget(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if !ok {
-				return fmt.Errorf("no active muninn memory %q (harness memories are managed by their harness)", args[0])
+			fmt.Println(out.Message)
+			return nil
+		})
+	}}
+}
+
+func showCmd() *cobra.Command {
+	return &cobra.Command{Use: "show <memory-id>", Short: "Show memory text and its upstream mapping", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		return withApp(func(ctx context.Context, a *app.App) error {
+			u, err := a.DB.Resolve(args[0])
+			if err != nil {
+				return err
 			}
-			fmt.Println("forgot", args[0])
-			return withApp(func(ctx context.Context, a *app.App) error { _, err := a.Reindex(ctx); return err })
-		}}
+			o, err := a.Origin(u)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("[%s] %s\nsource: %s\npath: %s\nkey: %s\norigin: %s\n", u.SID, u.Body, o.Source, o.Path, o.Key, o.Origin)
+			return nil
+		})
+	}}
 }
 
 func listCmd() *cobra.Command {
 	var limit int
 	c := &cobra.Command{Use: "list", Short: "List indexed memories", RunE: func(*cobra.Command, []string) error {
 		return withApp(func(ctx context.Context, a *app.App) error {
-			rows, err := a.DB.QueryContext(ctx, `SELECT id, kind, scope, body FROM units WHERE active=1 ORDER BY updated_ns DESC LIMIT ?`, limit)
+			rows, err := a.DB.QueryContext(ctx, `SELECT sid, kind, scope, body FROM units WHERE active=1 AND sid NOT IN (SELECT sid FROM suppressed) ORDER BY updated_ns DESC LIMIT ?`, limit)
 			if err != nil {
 				return err
 			}
 			defer rows.Close()
 			for rows.Next() {
-				var id int64
+				var id string
 				var kind, scope, body string
 				rows.Scan(&id, &kind, &scope, &body)
-				fmt.Printf("[%d] (%s, %s) %s\n", id, kind, scope, recall.Truncate(strings.Join(strings.Fields(body), " "), 200))
+				fmt.Printf("[%s] (%s, %s) %s\n", id, kind, scope, recall.Truncate(strings.Join(strings.Fields(body), " "), 200))
 			}
 			return rows.Err()
 		})
@@ -250,12 +277,12 @@ func listCmd() *cobra.Command {
 func relatedCmd() *cobra.Command {
 	return &cobra.Command{Use: "related <unit-id>", Short: "Nearest neighbours of a memory", Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			var id int64
-			if _, err := fmt.Sscan(args[0], &id); err != nil {
-				return err
-			}
 			return withApp(func(ctx context.Context, a *app.App) error {
-				res, err := a.Searcher.Related(ctx, id, 10)
+				u, err := a.DB.Resolve(args[0])
+				if err != nil {
+					return err
+				}
+				res, err := a.Searcher.Related(ctx, u.ID, 10)
 				if err != nil {
 					return err
 				}
