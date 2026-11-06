@@ -25,19 +25,21 @@ func OpenAudit() (*App, error) {
 }
 
 type AuditRun struct {
-	ID       int64            `json:"id"`
-	Time     time.Time        `json:"time"`
-	Harness  string           `json:"harness"`
-	Session  string           `json:"session"`
-	Home     string           `json:"home"`
-	Scope    string           `json:"scope"`
-	Trigger  string           `json:"trigger"`
-	DryRun   bool             `json:"dry_run"`
-	Model    string           `json:"model"`
-	Messages []AuditMessage   `json:"messages"`
-	Calls    []extract.Result `json:"calls"`
-	Report   CaptureReport    `json:"report"`
-	Error    string           `json:"error,omitempty"`
+	ID         int64            `json:"id"`
+	Time       time.Time        `json:"time"`
+	Harness    string           `json:"harness"`
+	Session    string           `json:"session"`
+	Home       string           `json:"home"`
+	Scope      string           `json:"scope"`
+	Trigger    string           `json:"trigger"`
+	DryRun     bool             `json:"dry_run"`
+	Model      string           `json:"model"`
+	Messages   []AuditMessage   `json:"messages"`
+	Calls      []extract.Result `json:"calls"`
+	Report     CaptureReport    `json:"report"`
+	ErrorClass string           `json:"error_class,omitempty"`
+	Backfill   bool             `json:"backfill"`
+	Error      string           `json:"error,omitempty"`
 }
 type AuditMessage struct {
 	ID   string `json:"id"`

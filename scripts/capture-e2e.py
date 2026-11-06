@@ -98,7 +98,7 @@ for name, provider in (("no-key", "openai-compatible"), ("network-down", "ollama
     before = len(log.read_text().splitlines())
     hook(home, name)
     lines = log.read_text().splitlines()
-    assert len(lines) == before + 1 and "capture failed (details withheld)" in lines[-1], lines
+    assert len(lines) == before + 1 and "capture failed class=" in lines[-1], lines
     runs = json.loads(command(["capture", "log", "--session", name, "--json"]).stdout)
     assert len(runs) == 1 and runs[0]["error"], runs
     print(f"capture {name}: exit=0, silent stdout/stderr, exactly one safe log line, error audited: ok")

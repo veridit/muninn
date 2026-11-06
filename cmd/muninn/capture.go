@@ -15,12 +15,13 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/veridit/muninn/internal/app"
 	"github.com/veridit/muninn/internal/config"
+	"github.com/veridit/muninn/internal/extract"
 	"github.com/veridit/muninn/internal/harness"
 )
 
 func captureCmd() *cobra.Command {
 	var session, home, harnessName string
-	var dry, asJSON, hook bool
+	var dry, asJSON, hook, backfill bool
 	c := &cobra.Command{Use: "capture", Short: "Extract durable memories from stdin or a jcode session (remote LLM by default)", RunE: func(cmd *cobra.Command, _ []string) (commandErr error) {
 		audited := false
 		defer func() {
@@ -31,6 +32,7 @@ func captureCmd() *cobra.Command {
 						r.Trigger = os.Getenv("JCODE_HOOK_EVENT")
 					}
 					if commandErr != nil {
+						r.ErrorClass = extract.FailureClass(commandErr)
 						r.Error = "capture failed before extraction (details withheld)"
 					} else {
 						r.Report.Skipped = "capture skipped before extraction"
@@ -42,7 +44,7 @@ func captureCmd() *cobra.Command {
 				}
 			}
 			if hook && commandErr != nil {
-				_ = captureLog("capture failed (details withheld), pending messages will retry")
+				_ = captureLog("capture failed class=" + extract.FailureClass(commandErr) + ", pending messages will retry")
 				commandErr = nil
 			}
 		}()
@@ -53,6 +55,9 @@ func captureCmd() *cobra.Command {
 				return errors.New("capture hook supports turn_end and session_end only")
 			}
 			harnessName = "jcode"
+		}
+		if hook && backfill {
+			return errors.New("--backfill is manual only")
 		}
 		if home == "" {
 			home = os.Getenv("JCODE_HOME")
@@ -121,6 +126,9 @@ func captureCmd() *cobra.Command {
 				return err
 			}
 			defer a.Close()
+			if hook {
+				a.Indexer.MaxEmbed = 1
+			}
 			binding := a.Bound(home, cwd)
 			if binding.Err != nil {
 				return binding.Err
@@ -129,12 +137,16 @@ func captureCmd() *cobra.Command {
 				return err
 			}
 			audited = true
-			r, err := binding.Capture(ctx, a, app.CaptureOptions{Harness: harnessName, Session: session, Home: home, Trigger: os.Getenv("JCODE_HOOK_EVENT"), Messages: messages, DryRun: dry, Periodic: hook && os.Getenv("JCODE_HOOK_EVENT") == "turn_end"})
+			trigger := ""
+			if hook {
+				trigger = os.Getenv("JCODE_HOOK_EVENT")
+			}
+			r, err := binding.Capture(ctx, a, app.CaptureOptions{Harness: harnessName, Session: session, Home: home, Trigger: trigger, Messages: messages, DryRun: dry, Backfill: backfill, Periodic: hook && os.Getenv("JCODE_HOOK_EVENT") == "turn_end"})
 			if err != nil {
 				return err
 			}
 			if hook {
-				return captureLog(fmt.Sprintf("processed=%d proposals=%d rejected=%d tokens=%d latency_ms=%d skipped=%s", r.Processed, len(r.Actions), r.Rejected, r.Usage.TotalTokens, r.LatencyMS, r.Skipped))
+				return captureLog(fmt.Sprintf("processed=%d backlog_skipped=%d proposals=%d rejected=%d tokens=%d latency_ms=%d skipped=%s", r.Processed, r.BacklogSkipped, len(r.Actions), r.Rejected, r.Usage.TotalTokens, r.LatencyMS, r.Skipped))
 			}
 			if asJSON {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(r)
@@ -160,6 +172,7 @@ func captureCmd() *cobra.Command {
 	c.Flags().StringVar(&session, "session", "", "session identity (required)")
 	c.Flags().StringVar(&home, "jcode-home", "", "session's JCODE_HOME, defaults to environment/global")
 	c.Flags().StringVar(&harnessName, "harness", "stdin", "transcript adapter: stdin or jcode")
+	c.Flags().BoolVar(&backfill, "backfill", false, "manually process historical backlog skipped by initial hooks")
 	c.Flags().BoolVar(&dry, "dry-run", false, "propose actions without saving memories or advancing high-water marks")
 	c.Flags().BoolVar(&asJSON, "json", false, "print proposals and usage as JSON")
 	c.Flags().BoolVar(&hook, "hook", false, "jcode detached turn_end/session_end observer, log summaries only")

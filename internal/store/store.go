@@ -38,6 +38,7 @@ type DB struct {
 }
 
 const schema = `
+CREATE TABLE IF NOT EXISTS capture_backlog (session TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(session,message));
 CREATE TABLE IF NOT EXISTS capture_bindings (session TEXT PRIMARY KEY, scope TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS capture_seen (
  session TEXT NOT NULL, message TEXT NOT NULL, PRIMARY KEY(session,message)

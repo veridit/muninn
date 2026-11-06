@@ -19,10 +19,10 @@ import (
 )
 
 type CaptureOptions struct {
-	Harness, Session, Home string
-	Trigger                string
-	Messages               []harness.CaptureMessage
-	DryRun, Periodic       bool
+	Harness, Session, Home     string
+	Trigger                    string
+	Messages                   []harness.CaptureMessage
+	DryRun, Periodic, Backfill bool
 }
 type CaptureAction struct {
 	extract.Candidate
@@ -33,12 +33,13 @@ type CaptureAction struct {
 	Origin string  `json:"origin"`
 }
 type CaptureReport struct {
-	Actions   []CaptureAction `json:"actions"`
-	Usage     extract.Usage   `json:"usage"`
-	LatencyMS int64           `json:"latency_ms"`
-	Processed int             `json:"processed"`
-	Rejected  int             `json:"rejected"`
-	Skipped   string          `json:"skipped,omitempty"`
+	Actions        []CaptureAction `json:"actions"`
+	Usage          extract.Usage   `json:"usage"`
+	LatencyMS      int64           `json:"latency_ms"`
+	Processed      int             `json:"processed"`
+	BacklogSkipped int             `json:"backlog_skipped"`
+	Rejected       int             `json:"rejected"`
+	Skipped        string          `json:"skipped,omitempty"`
 }
 
 func captureHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
@@ -46,7 +47,7 @@ func captureHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.En
 // Capture reuses the surface Binding for all reads and writes. The caller must
 // resolve a session's persisted cwd, not the daemon's working directory.
 func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report CaptureReport, runErr error) {
-	audit := AuditRun{Time: time.Now().UTC(), Harness: o.Harness, Session: o.Session, Home: o.Home, Trigger: o.Trigger, DryRun: o.DryRun, Model: a.Cfg.Extract.Model}
+	audit := AuditRun{Time: time.Now().UTC(), Harness: o.Harness, Session: o.Session, Home: o.Home, Trigger: o.Trigger, DryRun: o.DryRun, Backfill: o.Backfill, Model: a.Cfg.Extract.Model}
 	if audit.Trigger == "" {
 		audit.Trigger = "manual"
 	}
@@ -54,6 +55,7 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 		audit.Report = report
 		if runErr != nil {
 			audit.Error = auditSafe(runErr.Error())
+			audit.ErrorClass = extract.FailureClass(runErr)
 		}
 		if err := a.SaveAudit(audit); err != nil && runErr == nil {
 			runErr = fmt.Errorf("capture audit: %w", err)
@@ -149,6 +151,25 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 	if err != nil {
 		return report, err
 	}
+	if o.Backfill {
+		rows, err := a.DB.QueryContext(ctx, `SELECT message FROM capture_backlog WHERE session=?`, session)
+		if err != nil {
+			return report, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return report, err
+			}
+			delete(seen, id)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return report, err
+		}
+	}
 	var pending []harness.CaptureMessage
 	turns := 0
 	for _, m := range o.Messages {
@@ -162,6 +183,50 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 	every := a.Cfg.Extract.EveryTurns
 	if every <= 0 {
 		every = 12
+	}
+	if len(seen) == 0 && !o.Backfill && (o.Trigger == "turn_end" || o.Trigger == "session_end") && turns > every*2 {
+		remaining := every * 2
+		cut := len(pending)
+		for cut > 0 {
+			cut--
+			if pending[cut].Role == "user" && pending[cut].Text != "" {
+				remaining--
+				if remaining == 0 {
+					break
+				}
+			}
+		}
+		older := pending[:cut]
+		report.BacklogSkipped = len(older)
+		if !o.DryRun {
+			tx, err := a.DB.BeginTx(ctx, nil)
+			if err != nil {
+				return report, err
+			}
+			for _, m := range older {
+				if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO capture_seen(session,message) VALUES(?,?)`, session, m.ID); err != nil {
+					break
+				}
+				if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO capture_backlog(session,message) VALUES(?,?)`, session, m.ID); err != nil {
+					break
+				}
+			}
+			if err == nil {
+				_, err = tx.ExecContext(ctx, `INSERT INTO capture_state(session,high_water) VALUES(?,?) ON CONFLICT(session) DO UPDATE SET high_water=(SELECT count(*) FROM capture_seen WHERE session=excluded.session)`, session, len(older))
+			}
+			if err != nil {
+				tx.Rollback()
+				return report, err
+			}
+			if err = tx.Commit(); err != nil {
+				return report, err
+			}
+		}
+		for _, m := range older {
+			seen[m.ID] = true
+		}
+		pending = pending[cut:]
+		turns = every * 2
 	}
 	if o.Periodic && turns < every {
 		report.Skipped = "waiting for extraction interval"
@@ -222,7 +287,18 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 					known = append(known, extract.Known{SID: r.Unit.SID, Content: r.Unit.Body})
 				}
 			}
-			result, err = extract.Run(ctx, a.Cfg.Extract, text, known)
+			// Leave time to persist this chunk after the provider returns.
+			providerCtx := ctx
+			providerCancel := func() {}
+			if deadline, ok := ctx.Deadline(); ok {
+				reserve := 2 * time.Second
+				if left := time.Until(deadline); left < 4*time.Second {
+					reserve = left / 4
+				}
+				providerCtx, providerCancel = context.WithDeadline(ctx, deadline.Add(-reserve))
+			}
+			result, err = extract.Run(providerCtx, a.Cfg.Extract, text, known)
+			providerCancel()
 			audit.Calls = append(audit.Calls, result)
 			if err != nil {
 				report.Usage.PromptTokens += result.Usage.PromptTokens
@@ -272,6 +348,9 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 			}
 			for _, m := range pending[start:end] {
 				if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO capture_seen(session,message) VALUES(?,?)`, session, m.ID); err != nil {
+					break
+				}
+				if _, err = tx.ExecContext(ctx, `DELETE FROM capture_backlog WHERE session=? AND message=?`, session, m.ID); err != nil {
 					break
 				}
 			}
