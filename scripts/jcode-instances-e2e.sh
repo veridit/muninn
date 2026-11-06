@@ -18,8 +18,13 @@ mkinst() { # name fact
   cat > "$h/memory/projects/samehash.json" <<EOF
 {"graph_version":1,"memories":{"m1":{"id":"m1","content":"$2","category":"fact","active":true}}}
 EOF
-  # Stub jcode: record what muninn would inject.
-  printf '#!/bin/sh\nprintf "%%s\\n" "$JCODE_HOME" "$@" > "%s/injected"\n' "$h" > "$h/bin/jcode"
+  # Stub jcode: like the real parser, reject unknown dash-leading arguments
+  # (exit 2); record what muninn would inject, including stdin.
+  cat > "$h/bin/jcode" <<STUB
+#!/bin/sh
+for a in "\$@"; do case "\$a" in --mode|-S|--session) ;; -*) echo "error: unexpected argument '\$a'" >&2; exit 2;; esac; done
+{ printf '%s\n' "\$JCODE_HOME" "\$@"; cat; } > "$h/injected"
+STUB
   chmod +x "$h/bin/jcode"
   cat > "$h/sessions/s1.json" <<EOF
 {"id":"s1","messages":[{"role":"user","content":[{"type":"text","text":"how do we deploy the payment service"}]}]}

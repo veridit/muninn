@@ -448,7 +448,10 @@ func runHook(name string, budget time.Duration) error {
 		if bin == "" {
 			bin = "jcode"
 		}
-		cmd := exec.CommandContext(ctx, bin, "transcript", "--mode", "send", "-S", sid, resp.Block)
+		// The block goes on stdin, never argv: it starts with "-- muninn recall",
+		// which jcode's argument parser rejects as an unknown flag (exit 2).
+		cmd := exec.CommandContext(ctx, bin, "transcript", "--mode", "send", "-S", sid)
+		cmd.Stdin = strings.NewReader(resp.Block)
 		cmd.Env = append(os.Environ(), "JCODE_HOME="+inst.Home)
 		if os.Getenv("JCODE_RUNTIME_DIR") == "" {
 			if rt := filepath.Join(inst.Home, "runtime"); dirExists(rt) {

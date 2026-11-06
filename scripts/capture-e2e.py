@@ -33,7 +33,7 @@ server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Provider)
 thread = threading.Thread(target=server.serve_forever, daemon=True)
 thread.start()
 cfg = json.loads(config.read_text())
-cfg["extract"] = {"provider": "ollama", "base_url": f"http://127.0.0.1:{server.server_port}/v1", "model": "synthetic-chat", "every_turns": 1, "timeout_seconds": 2, "audit_days": 30}
+cfg["extract"] = {"provider": "ollama", "base_url": f"http://127.0.0.1:{server.server_port}/v1", "model": "synthetic-chat", "every_turns": 1, "timeout_seconds": 10, "audit_days": 30}
 config.write_text(json.dumps(cfg))
 
 def command(args, home=None, **extra):
