@@ -24,6 +24,8 @@ import (
 // Config is nested under extract in config.json. No credentials belong here.
 type Config struct {
 	AuditDays      int     `json:"audit_days"`
+	HookChunkBytes int     `json:"hook_chunk_bytes"`
+	MaxTokens      int     `json:"max_tokens,omitempty"`
 	Provider       string  `json:"provider"`
 	BaseURL        string  `json:"base_url"`
 	Model          string  `json:"model"`
@@ -50,7 +52,7 @@ func (c Config) Skips(cwd string) bool {
 }
 
 func Defaults() Config {
-	return Config{AuditDays: 30, Provider: "openai-compatible", BaseURL: "https://api.deepseek.com", Model: "deepseek-flash", APIKeyEnv: "DEEPSEEK_API_KEY", EveryTurns: 12, TimeoutSeconds: 45, TopK: 12, DedupeCosine: 0.98}
+	return Config{AuditDays: 30, HookChunkBytes: 8192, MaxTokens: 4096, Provider: "openai-compatible", BaseURL: "https://api.deepseek.com", Model: "deepseek-flash", APIKeyEnv: "DEEPSEEK_API_KEY", EveryTurns: 12, TimeoutSeconds: 45, TopK: 12, DedupeCosine: 0.98}
 }
 
 type Candidate struct {
@@ -205,7 +207,11 @@ func Run(ctx context.Context, c Config, transcript string, known []Known) (Resul
 		Known      []Known `json:"known"`
 		Transcript string  `json:"transcript"`
 	}{known, transcript})
-	payload := map[string]any{"model": c.Model, "messages": []map[string]string{{"role": "system", "content": prompt}, {"role": "user", "content": string(input)}}, "max_tokens": 4096, "stream": false, "temperature": 0}
+	maxTokens := c.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 4096
+	}
+	payload := map[string]any{"model": c.Model, "messages": []map[string]string{{"role": "system", "content": prompt}, {"role": "user", "content": string(input)}}, "max_tokens": maxTokens, "stream": false, "temperature": 0}
 	if u.Hostname() == "api.deepseek.com" {
 		payload["thinking"] = map[string]string{"type": "disabled"}
 	}

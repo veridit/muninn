@@ -42,10 +42,11 @@ type AuditRun struct {
 	Error      string           `json:"error,omitempty"`
 }
 type AuditMessage struct {
-	ID   string `json:"id"`
-	Role string `json:"role"`
-	Hash string `json:"hash"`
-	Text string `json:"text"`
+	OriginalID string `json:"original_id,omitempty"`
+	ID         string `json:"id"`
+	Role       string `json:"role"`
+	Hash       string `json:"hash"`
+	Text       string `json:"text"`
 }
 
 func auditSafe(s string) string {

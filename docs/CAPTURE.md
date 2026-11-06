@@ -27,7 +27,8 @@ Add an `extract` object to muninn's `config.json`:
     "timeout_seconds": 45,
     "top_k": 12,
     "dedupe_cosine": 0.98,
-    "audit_days": 30
+    "audit_days": 30,
+    "hook_chunk_bytes": 8192
   }
 }
 ```
@@ -128,7 +129,9 @@ seconds. Each provider chunk uses the remaining deadline with a persistence
 reserve, and completed earlier chunks survive a later timeout. Hook indexing
 caps embedding work to one unit per pass. Failures emit exactly one content-free
 summary naming `timeout`, `no_key`, `provider_http_STATUS`, `provider_network`,
-`parse`, `scope`, `index`, `config`, or `capture`, while returning success to the harness.
+`parse`, `scope`, `index`, `storage`, `input`, `config`, or `internal`, while
+returning success to the harness. Driver errors containing an unwrapped
+`context deadline exceeded` are classified as `timeout` too.
 Failed chunks remain pending for the next hook. This does not edit or
 disable jcode's sidecar.
 
@@ -208,10 +211,20 @@ shipped SDD row format remains unchanged.
   writes use the existing atomic-file store. Other mutation commands retain
   their existing concurrency semantics, so do not concurrently rewrite native
   storage with a separate importer while capture is writing.
-* Inputs are bounded (256 KiB stdin, 256 MiB snapshot/journal), requests use
-  message-aligned 48 KiB chunks, and output is capped at 4096 tokens. Oversized
-  individual messages fail closed instead of silently losing their tail. A
-  truncated provider output fails the chunk and does not advance its checkpoint.
+* Inputs are bounded (256 KiB stdin, 256 MiB snapshot/journal). Manual capture
+  uses message-aligned 48 KiB chunks and up to `extract.max_tokens` output tokens
+  (4096 by default). Oversized manual messages fail closed rather than losing
+  their tail. Hook calls instead use `hook_chunk_bytes` (8192 by default,
+  clamped to 1024..49152), at most 4 KiB of known-memory text, at most 1024
+  output tokens, and a 20-second provider deadline within the run's remaining
+  budget. This byte bound is deterministic, not a guessed model-token count.
+  Large hook messages are split on UTF-8 boundaries into stable fragments.
+  Each successful fragment checkpoints independently, and the original message
+  is marked seen only after the last fragment. Audits link fragments through
+  `original_id`. Whole-message secret withholding happens before splitting.
+  Failed fragments remain pending without replaying completed prefixes. The
+  observer defers further chunks when less than three seconds remain.
+  A truncated provider output fails the chunk and does not advance its checkpoint.
 * Missing final lifecycle events, deleted session files, or process termination
   can defer capture. A later manual `capture` retries pending messages. Capture
   intentionally does not promise exactly-once remote LLM billing after crashes.

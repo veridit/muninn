@@ -12,7 +12,7 @@ func FailureClass(err error) string {
 	if err == nil {
 		return ""
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "timeout") {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") || strings.Contains(err.Error(), "context canceled") {
 		return "timeout"
 	}
 	message := err.Error()
@@ -38,5 +38,11 @@ func FailureClass(err error) string {
 	if strings.Contains(message, "provider") || strings.Contains(message, "base URL") {
 		return "config"
 	}
-	return "capture"
+	if strings.Contains(message, "constraint failed") || strings.Contains(message, "database") || strings.Contains(message, "sqlite") {
+		return "storage"
+	}
+	if strings.Contains(message, "exceeds") || strings.Contains(message, "requires a harness") || strings.Contains(message, "session is required") || strings.Contains(message, "snapshot") || strings.Contains(message, "journal") {
+		return "input"
+	}
+	return "internal"
 }

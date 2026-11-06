@@ -236,9 +236,26 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 		report.Skipped = "no new messages"
 		return report, nil
 	}
-	// Chunk by messages, retaining their stable ids. No tail truncation: messages
-	// beyond this invocation's deadline stay pending for the next observer.
+	// Chunk by messages (or resumable hook fragments), retaining stable ids.
+	hook := o.Trigger == "turn_end" || o.Trigger == "session_end"
+	chunkLimit := 48 << 10
+	originals, lastFragments := map[string]string{}, map[string]string{}
+	if hook {
+		chunkLimit = a.Cfg.Extract.HookChunkBytes
+		if chunkLimit <= 0 {
+			chunkLimit = 8192
+		}
+		chunkLimit = max(1024, min(chunkLimit, 48<<10))
+		pending, originals, lastFragments = captureFragments(pending, seen, chunkLimit)
+	}
+	// Messages beyond the deadline stay pending for the next observer.
 	for start := 0; start < len(pending); {
+		if hook && report.Processed > 0 {
+			if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < 3*time.Second {
+				report.Skipped = "remaining messages deferred to next hook (budget)"
+				return report, nil
+			}
+		}
 		var chunk strings.Builder
 		end := start
 		for end < len(pending) {
@@ -248,13 +265,13 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 				t = ""
 			}
 			line := m.Role + ": " + t + "\n"
-			if t != "" && chunk.Len()+len(line) > 48<<10 && end > start {
+			if t != "" && chunk.Len()+len(line) > chunkLimit && end > start {
 				break
 			}
-			if len(line) > 48<<10 {
-				return report, errors.New("capture message exceeds 48 KiB, refusing silent loss")
+			if len(line) > chunkLimit {
+				return report, fmt.Errorf("capture message exceeds %d bytes, refusing silent loss", chunkLimit)
 			}
-			audit.Messages = append(audit.Messages, AuditMessage{ID: m.ID, Role: m.Role, Hash: captureHash(m.Text), Text: t})
+			audit.Messages = append(audit.Messages, AuditMessage{ID: m.ID, OriginalID: originals[m.ID], Role: m.Role, Hash: captureHash(m.Text), Text: t})
 			if t != "" {
 				chunk.WriteString(line)
 			}
@@ -282,8 +299,13 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 				return report, err
 			}
 			var known []extract.Known
+			knownBytes := 0
 			for _, r := range hits {
 				if !project.LooksSecret(r.Unit.Body) {
+					if hook && knownBytes+len(r.Unit.Body) > 4096 {
+						continue
+					}
+					knownBytes += len(r.Unit.Body)
 					known = append(known, extract.Known{SID: r.Unit.SID, Content: r.Unit.Body})
 				}
 			}
@@ -297,7 +319,17 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 				}
 				providerCtx, providerCancel = context.WithDeadline(ctx, deadline.Add(-reserve))
 			}
-			result, err = extract.Run(providerCtx, a.Cfg.Extract, text, known)
+			callCfg := a.Cfg.Extract
+			callCancel := func() {}
+			if hook {
+				if callCfg.MaxTokens <= 0 || callCfg.MaxTokens > 1024 {
+					callCfg.MaxTokens = 1024
+				}
+				callCfg.MaxTokens = max(128, callCfg.MaxTokens)
+				providerCtx, callCancel = context.WithTimeout(providerCtx, 20*time.Second)
+			}
+			result, err = extract.Run(providerCtx, callCfg, text, known)
+			callCancel()
 			providerCancel()
 			audit.Calls = append(audit.Calls, result)
 			if err != nil {
@@ -349,6 +381,14 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 			for _, m := range pending[start:end] {
 				if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO capture_seen(session,message) VALUES(?,?)`, session, m.ID); err != nil {
 					break
+				}
+				if original := lastFragments[m.ID]; original != "" {
+					if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO capture_seen(session,message) VALUES(?,?)`, session, original); err != nil {
+						break
+					}
+					if _, err = tx.ExecContext(ctx, `DELETE FROM capture_backlog WHERE session=? AND message=?`, session, original); err != nil {
+						break
+					}
 				}
 				if _, err = tx.ExecContext(ctx, `DELETE FROM capture_backlog WHERE session=? AND message=?`, session, m.ID); err != nil {
 					break

@@ -21,7 +21,9 @@ func TestFailureClassNeverIncludesProviderDetails(t *testing.T) {
 		{errors.New("capture session binding changed, start a new session"), "scope"},
 		{errors.New("constraint failed: UNIQUE constraint failed: neighbors.unit_id, neighbors.nbr_id (1555)"), "index"},
 		{errors.New("index: synthetic storage failure"), "index"},
-		{errors.New("unexpected synthetic private text"), "capture"},
+		{errors.New("context deadline exceeded"), "timeout"},
+		{errors.New("context canceled"), "timeout"},
+		{errors.New("unexpected synthetic private text"), "internal"},
 	} {
 		if got := FailureClass(tc.err); got != tc.want {
 			t.Fatalf("class=%s want=%s", got, tc.want)
