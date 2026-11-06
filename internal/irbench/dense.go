@@ -154,8 +154,15 @@ func MaxSim(ctx context.Context, queries [][]float32, vectors []Vector, k, keep 
 	var top []Hit
 	for id, s := range scores {
 		if !math.IsNaN(s) {
-			top = topAdd(top, Hit{id, s}, k)
+			if k >= len(vectors) {
+				top = append(top, Hit{id, s})
+			} else {
+				top = topAdd(top, Hit{id, s}, k)
+			}
 		}
+	}
+	if k >= len(vectors) {
+		sort.Slice(top, func(i, j int) bool { return better(top[i], top[j]) })
 	}
 	return top, nil
 }

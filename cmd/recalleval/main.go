@@ -52,6 +52,8 @@ func main() {
 	input := flag.String("input", "", "replay JSON")
 	split := flag.String("split", "development", "split")
 	variant := flag.String("variant", "baseline", "experiment")
+	cachePath := flag.String("query-cache", "", "scratch dense query cache")
+	prepareCache := flag.Bool("prepare-cache", false, "embed selected split once, requires exclusive Ollama lease")
 	flag.Parse()
 	if *dbpath == "" || *input == "" {
 		panic("explicit -db and -input required")
@@ -63,7 +65,7 @@ func main() {
 	}
 	rel, err := filepath.Rel(base, abs)
 	if os.Getenv("JCODE_SCRATCH_DIR") == "" || err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		panic("database must be under scratch recall3")
+		panic("database must be under scratch irbench/replay")
 	}
 	db, err := store.Open(*dbpath)
 	must(err)
@@ -72,6 +74,10 @@ func main() {
 	must(err)
 	ctx := context.Background()
 	em := embed.NewOllama(cfg.OllamaURL, cfg.EmbedModel, 0)
+	if *prepareCache {
+		must(prepareQueryCache(ctx, db, em, *input, *split, *cachePath))
+		return
+	}
 	// CPU lexical experiments do not probe or warm Ollama.
 	if *variant == "baseline" {
 		if !em.Available(ctx) {
@@ -94,9 +100,18 @@ func main() {
 	if *variant == "no-relative-gate" {
 		e.RelativeFloor = 0
 	}
+	var queryCosts map[string]queryVectors
 	if *variant == "baseline" {
 		_, err = em.Embed(ctx, []string{"warmup"})
 		must(err)
+	} else if *variant == "maxsim" || *variant == "rrf" {
+		cache, err := loadQueryCache(db, em.Model(), *cachePath)
+		must(err)
+		queryCosts = cache.Queries
+		// Raw RRF and cosine scores are not production keyword scores. These
+		// predeclared diagnostic arms use semantic and relative gates only.
+		e.Options.MinScore = 0
+		e.SearchFunc = denseCallback(ctx, db, *variant, cache)
 	} else {
 		e.SearchFunc = lexicalCallback(ctx, db, *variant)
 	}
@@ -130,7 +145,12 @@ func main() {
 		if err != nil {
 			errText = err.Error()
 		}
-		must(enc.Encode(map[string]any{"id": m.ID, "response": resp, "latency_ms": float64(time.Since(t).Microseconds()) / 1000, "error": errText, "scopes": b.Scopes, "query": q, "variant": *variant}))
+		cpuMS := float64(time.Since(t).Microseconds()) / 1000
+		embedMS := 0.0
+		if resp.Skipped == "" && queryCosts != nil {
+			embedMS = queryCosts[queryKey(q)].EmbeddingMS
+		}
+		must(enc.Encode(map[string]any{"id": m.ID, "response": resp, "latency_ms": cpuMS + embedMS, "retrieval_cpu_ms": cpuMS, "embedding_ms": embedMS, "cached_embedding": queryCosts != nil, "error": errText, "scopes": b.Scopes, "query": q, "variant": *variant}))
 		fmt.Fprintf(os.Stderr, "id=%d ms=%d hits=%d error=%s\n", m.ID, time.Since(t).Milliseconds(), len(resp.Hits), errText)
 	}
 }

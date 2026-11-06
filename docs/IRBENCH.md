@@ -86,3 +86,36 @@ only empty evidence, whereas official answerability excludes every `_abs`
 question. Use the shared evaluator's 91-positive cohort, not the diagnostic94.
 `cmd/irfusion` times fusion of saved same-snapshot candidate lists and
 `scripts/irbench-summary.py` summarizes primitive diagnostics, not official QA.
+
+### Dense chronological development arms
+
+`cmd/recalleval -prepare-cache -query-cache <scratch-path>` embeds the selected
+split's truncated, non-self-output queries in up to eight 600-byte passages.
+Run this **only with the shared owner's exclusive Ollama lease**. Cache keys
+are SHA256 of the same trimmed/truncated query used by the engine. Cache
+metadata fixes the snapshot pipeline hash, query prefix and configured model.
+Each completed query is atomically checkpointed to allow prompt lease release.
+
+After releasing the lease, `scripts/irbench-dense-replay.py` runs MaxSim and
+RRF on CPU against separate recall2 backups using this cache. No model calls
+occur in dense callbacks. Canonical/source visibility is applied before each
+passage's 1,024-entry Hamming budget, exact float rescoring follows, and
+SID/content-hash dedup precedes each 20-candidate channel limit. RRF60 fuses
+IDF24 weighted-BM2520 with passage-MaxSim20. Every fused candidate gets exact
+maximum passage cosine for the engine's semantic gate, including lexical-only
+candidates outside the dense channel shortlist.
+
+These predeclared diagnostic policies disable absolute keyword MinScore,
+because raw RRF is on an incompatible score scale. Configured semantic gates
+and RelativeFloor remain enabled. MaxSim Total is 10*cosine; RRF Total is the
+raw reciprocal-rank sum. Neither is a production-equivalent hybrid ablation.
+The model is passage pooling against one stored vector, not token ColBERT.
+
+Dense JSONL retains the approved response schema and additionally records
+`retrieval_cpu_ms`, `embedding_ms` and `cached_embedding`. `latency_ms` is the
+sum of actual CPU recall time and measured leased cache-preparation embedding
+time for that query. It is a composed estimate, not contiguous end-to-end wall
+time. Own-output skips charge zero embedding. Startup/index-loading is excluded.
+The two arms share the same query cache but separate injection chronology.
+Tests cover 1,100 excluded candidates preceding one bound candidate, cache miss,
+model/pipeline mismatch, and query normalization without invoking a model.
