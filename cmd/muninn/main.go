@@ -283,7 +283,7 @@ func showCmd() *cobra.Command {
 				return err
 			}
 			canonical := units[0]
-			fmt.Printf("[%s] %s\n", canonical.SID, canonical.Body)
+			fmt.Printf("[%s] %s\ncategory: %s\n", canonical.SID, canonical.Body, canonical.Category)
 			for _, u := range units {
 				o, err := a.Origin(u)
 				if err != nil {
@@ -308,7 +308,7 @@ func listCmd() *cobra.Command {
 		return withApp(func(ctx context.Context, a *app.App) error {
 			b := view.binding(a)
 			where, params := b.SQL("u.scope", "u.source_id")
-			rows, err := a.DB.QueryContext(ctx, `SELECT sid, kind, `+b.ScopeExpr("u.scope", "u.source_id")+`, body FROM units u WHERE (`+where+`) AND active=1 AND sid NOT IN (SELECT sid FROM suppressed)
+			rows, err := a.DB.QueryContext(ctx, `SELECT sid, kind, `+b.ScopeExpr("u.scope", "u.source_id")+`, category, body FROM units u WHERE (`+where+`) AND active=1 AND sid NOT IN (SELECT sid FROM suppressed)
     AND u.id=(SELECT c.id FROM units c JOIN sources cs ON cs.id=c.source_id WHERE c.sid=u.sid ORDER BY (cs.kind='native') DESC,c.updated_ns DESC,c.id LIMIT 1)
     ORDER BY updated_ns DESC LIMIT ?`, append(params, limit)...)
 			if err != nil {
@@ -317,9 +317,11 @@ func listCmd() *cobra.Command {
 			defer rows.Close()
 			for rows.Next() {
 				var id string
-				var kind, scope, body string
-				rows.Scan(&id, &kind, &scope, &body)
-				fmt.Printf("[%s] (%s, %s) %s\n", id, kind, scope, recall.Truncate(strings.Join(strings.Fields(body), " "), 200))
+				var kind, scope, category, body string
+				if err := rows.Scan(&id, &kind, &scope, &category, &body); err != nil {
+					return err
+				}
+				fmt.Printf("[%s] (%s, %s, %s) %s\n", id, kind, scope, category, recall.Truncate(strings.Join(strings.Fields(body), " "), 200))
 			}
 			return rows.Err()
 		})

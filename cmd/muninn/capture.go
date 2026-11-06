@@ -21,7 +21,31 @@ import (
 func captureCmd() *cobra.Command {
 	var session, home, harnessName string
 	var dry, asJSON, hook bool
-	c := &cobra.Command{Use: "capture", Short: "Extract durable memories from stdin or a jcode session (remote LLM by default)", RunE: func(cmd *cobra.Command, _ []string) error {
+	c := &cobra.Command{Use: "capture", Short: "Extract durable memories from stdin or a jcode session (remote LLM by default)", RunE: func(cmd *cobra.Command, _ []string) (commandErr error) {
+		audited := false
+		defer func() {
+			if !audited {
+				if a, err := app.OpenAudit(); err == nil {
+					r := app.AuditRun{Time: time.Now().UTC(), Harness: harnessName, Session: session, Home: home, Trigger: "manual", DryRun: dry, Model: a.Cfg.Extract.Model}
+					if hook {
+						r.Trigger = os.Getenv("JCODE_HOOK_EVENT")
+					}
+					if commandErr != nil {
+						r.Error = "capture failed before extraction (details withheld)"
+					} else {
+						r.Report.Skipped = "capture skipped before extraction"
+					}
+					if err := a.SaveAudit(r); err != nil && commandErr == nil {
+						commandErr = err
+					}
+					a.Close()
+				}
+			}
+			if hook && commandErr != nil {
+				_ = captureLog("capture failed (details withheld), pending messages will retry")
+				commandErr = nil
+			}
+		}()
 		if hook {
 			session = os.Getenv("JCODE_HOOK_SESSION_ID")
 			event := os.Getenv("JCODE_HOOK_EVENT")
@@ -57,9 +81,6 @@ func captureCmd() *cobra.Command {
 		ctx, cancel := context.WithTimeout(cmd.Context(), time.Duration(seconds)*time.Second)
 		defer cancel()
 		run := func() error {
-			if cfg.Extract.Provider == "off" {
-				return nil
-			}
 			cwd, _ := os.Getwd()
 			var messages []harness.CaptureMessage
 			if harnessName == "jcode" {
@@ -107,7 +128,8 @@ func captureCmd() *cobra.Command {
 			if _, err := a.Reindex(ctx); err != nil {
 				return err
 			}
-			r, err := binding.Capture(ctx, a, app.CaptureOptions{Harness: harnessName, Session: session, Home: home, Messages: messages, DryRun: dry, Periodic: hook && os.Getenv("JCODE_HOOK_EVENT") == "turn_end"})
+			audited = true
+			r, err := binding.Capture(ctx, a, app.CaptureOptions{Harness: harnessName, Session: session, Home: home, Trigger: os.Getenv("JCODE_HOOK_EVENT"), Messages: messages, DryRun: dry, Periodic: hook && os.Getenv("JCODE_HOOK_EVENT") == "turn_end"})
 			if err != nil {
 				return err
 			}
@@ -133,12 +155,6 @@ func captureCmd() *cobra.Command {
 			return nil
 		}
 		err = run()
-		if hook && err != nil {
-			// No transcript, key, filesystem path, response body, or provider error is
-			// emitted from observers. Interactive runs retain safe diagnostic errors.
-			_ = captureLog("capture failed (details withheld), pending messages will retry")
-			return nil
-		}
 		return err
 	}}
 	c.Flags().StringVar(&session, "session", "", "session identity (required)")
@@ -147,6 +163,7 @@ func captureCmd() *cobra.Command {
 	c.Flags().BoolVar(&dry, "dry-run", false, "propose actions without saving memories or advancing high-water marks")
 	c.Flags().BoolVar(&asJSON, "json", false, "print proposals and usage as JSON")
 	c.Flags().BoolVar(&hook, "hook", false, "jcode detached turn_end/session_end observer, log summaries only")
+	c.AddCommand(captureAuditCmd(false), captureAuditCmd(true))
 	return c
 }
 

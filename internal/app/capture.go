@@ -20,14 +20,17 @@ import (
 
 type CaptureOptions struct {
 	Harness, Session, Home string
+	Trigger                string
 	Messages               []harness.CaptureMessage
 	DryRun, Periodic       bool
 }
 type CaptureAction struct {
 	extract.Candidate
-	Action string `json:"action"`
-	Target string `json:"target,omitempty"`
-	Origin string `json:"origin"`
+	Action string  `json:"action"`
+	Reason string  `json:"reason"`
+	Score  float64 `json:"cosine,omitempty"`
+	Target string  `json:"target,omitempty"`
+	Origin string  `json:"origin"`
 }
 type CaptureReport struct {
 	Actions   []CaptureAction `json:"actions"`
@@ -42,8 +45,20 @@ func captureHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.En
 
 // Capture reuses the surface Binding for all reads and writes. The caller must
 // resolve a session's persisted cwd, not the daemon's working directory.
-func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (CaptureReport, error) {
-	var report CaptureReport
+func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report CaptureReport, runErr error) {
+	audit := AuditRun{Time: time.Now().UTC(), Harness: o.Harness, Session: o.Session, Home: o.Home, Trigger: o.Trigger, DryRun: o.DryRun, Model: a.Cfg.Extract.Model}
+	if audit.Trigger == "" {
+		audit.Trigger = "manual"
+	}
+	defer func() {
+		audit.Report = report
+		if runErr != nil {
+			audit.Error = auditSafe(runErr.Error())
+		}
+		if err := a.SaveAudit(audit); err != nil && runErr == nil {
+			runErr = fmt.Errorf("capture audit: %w", err)
+		}
+	}()
 	if a.Cfg.Extract.Provider == "off" {
 		report.Skipped = "extraction off"
 		return report, nil
@@ -55,6 +70,7 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (Capture
 		b = b.Refresh(a)
 	}
 	scope, err := b.WriteScope("")
+	audit.Scope = scope
 	if err != nil {
 		return report, err
 	}
@@ -173,6 +189,7 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (Capture
 			if len(line) > 48<<10 {
 				return report, errors.New("capture message exceeds 48 KiB, refusing silent loss")
 			}
+			audit.Messages = append(audit.Messages, AuditMessage{ID: m.ID, Role: m.Role, Hash: captureHash(m.Text), Text: t})
 			if t != "" {
 				chunk.WriteString(line)
 			}
@@ -206,7 +223,12 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (Capture
 				}
 			}
 			result, err = extract.Run(ctx, a.Cfg.Extract, text, known)
+			audit.Calls = append(audit.Calls, result)
 			if err != nil {
+				report.Usage.PromptTokens += result.Usage.PromptTokens
+				report.Usage.CompletionTokens += result.Usage.CompletionTokens
+				report.Usage.TotalTokens += result.Usage.TotalTokens
+				report.LatencyMS += result.LatencyMS
 				return report, err
 			}
 		}
@@ -225,6 +247,7 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (Capture
 		local := map[string]bool{}
 		for n, c := range result.Candidates {
 			if local[c.Content] {
+				report.Actions = append(report.Actions, CaptureAction{Candidate: c, Action: "skip", Reason: "duplicate proposal in batch"})
 				continue
 			}
 			local[c.Content] = true
@@ -271,12 +294,13 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (Capture
 
 func (b Binding) capturePlan(ctx context.Context, a *App, c extract.Candidate) (CaptureAction, error) {
 	b = b.Refresh(a)
-	out := CaptureAction{Candidate: c, Action: "add"}
+	out := CaptureAction{Candidate: c, Action: "add", Reason: "new memory in bound scope"}
 	if c.Supersedes != "" && c.Trust == "high" {
 		old, err := b.Resolve(a, c.Supersedes)
 		if err == nil && old.Active {
 			if _, err := b.WriteScope(old.Scope); err == nil {
 				out.Action = "supersede"
+				out.Reason = "high-trust correction in writable scope"
 				out.Target = old.SID
 				return out, nil
 			}
@@ -284,6 +308,9 @@ func (b Binding) capturePlan(ctx context.Context, a *App, c extract.Candidate) (
 	}
 	// Ignore invalid/low-trust supersession requests entirely, including display.
 	out.Supersedes = ""
+	if c.Supersedes != "" {
+		out.Reason = "new memory, supersede target unavailable, outside writable scope, or not high trust"
+	}
 	// Exact matching searches every visible memory, not merely the model's top-K.
 	where, args := b.SQL("u.scope", "u.source_id")
 	args = append(args, c.Content)
@@ -309,6 +336,7 @@ func (b Binding) capturePlan(ctx context.Context, a *App, c extract.Candidate) (
 			return out, err
 		}
 		out.Action = "reinforce"
+		out.Reason = "exact duplicate"
 		out.Target = u.SID
 		return out, nil
 	}
@@ -333,6 +361,8 @@ func (b Binding) capturePlan(ctx context.Context, a *App, c extract.Candidate) (
 		for _, hit := range hits {
 			if hit.SemanticOn && hit.Semantic >= threshold {
 				out.Action = "reinforce"
+				out.Reason = "cosine exceeds dedupe threshold"
+				out.Score = hit.Semantic
 				out.Target = hit.Unit.SID
 				return out, nil
 			}

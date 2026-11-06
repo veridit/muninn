@@ -26,7 +26,8 @@ Add an `extract` object to muninn's `config.json`:
     "every_turns": 12,
     "timeout_seconds": 45,
     "top_k": 12,
-    "dedupe_cosine": 0.98
+    "dedupe_cosine": 0.98,
+    "audit_days": 30
   }
 }
 ```
@@ -117,6 +118,40 @@ contains only counts/status in muninn's `data/hook.log`, never memory text.
 The complete capture invocation has a 45-second default budget, capped at 120
 seconds. Failed chunks remain pending for the next hook. This does not edit or
 disable jcode's sidecar.
+
+## Local capture audit
+
+Every capture invocation, including dry runs, skipped intervals and provider
+failures, appends a local audit record. `capture_runs` and `capture_actions` live
+in muninn's private SQLite index in the data directory, not in `memories.json`
+or any project export. SQLite makes append and retention pruning atomic across
+concurrent observers. The database and its WAL sidecars are private (0600 on
+Unix). Never add the data directory to git, backup sharing or project sync.
+
+```sh
+muninn capture log --since 24h
+muninn capture log --session SESSION_ID --json
+muninn capture log 42                 # one run, including requests and actions
+muninn capture stats --since 168h
+```
+
+Records include time, harness/session/instance, binding scope, trigger, dry-run
+status, processed message ids/roles/content hashes and withheld-safe text, the
+exact prepared model request (including system prompt and known-memory sids),
+model output, usage/latency, parser rejection reasons, and candidate
+category/trust/content/action/reason/target/cosine. A prepared request on a failed
+run does not prove that a provider received it. Output matching credential
+patterns is withheld from the audit too, even when the provider returns it.
+Raw provider output is otherwise retained locally, not sent to a second service.
+Audit text is private conversation data even after credential filtering. The
+same pattern-matching limitations described above apply.
+
+`extract.audit_days` defaults to 30 (non-positive values also use 30). Expired
+runs and their actions are pruned on the next audit write. This is logical
+retention, not a promise of forensic erasure from filesystem snapshots/backups.
+Dry runs write audit records but never mutate native memories, capture bindings,
+or high-water checkpoints. `show` and `list` display memory category. Recall's
+shipped SDD row format remains unchanged.
 
 ## Storage, dedupe and limits
 
