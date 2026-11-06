@@ -68,11 +68,13 @@ for inst in alpha beta; do
   fi
 done
 
-echo "== shared project memories (.muninn/memories.jsonl)"
+echo "== shared project memories (muninn-notes branch at .muninn-notes/)"
 repo="$root/alpha/app"
 mkdir -p "$repo" && git -C "$repo" init -q && git -C "$repo" -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m root
 (cd "$repo" && "$m" remember --project "The payment service release checklist lives in docs/RELEASE.md" >/dev/null && "$m" sync >/dev/null)
-test -s "$repo/.muninn/memories.jsonl" && echo "project file written: ok"
+test -s "$repo/.muninn-notes/memories.jsonl" && echo "project branch file written: ok"
+test "$(git -C "$repo/.muninn-notes" branch --show-current)" = muninn-notes
+test -z "$(git -C "$repo" status --porcelain)" && echo "code worktree stays clean: ok"
 cat > "$root/alpha/.jcode/sessions/s2.json" <<EOF
 {"id":"s2","messages":[{"role":"user","content":[{"type":"text","text":"where is the payment service release checklist"}]}]}
 EOF
@@ -109,4 +111,6 @@ PY
 done
 echo "== capture fake-provider acceptance"
 python3 scripts/capture-e2e.py "$m" "$root"
+echo "== project-memory branch clone/migration acceptance"
+bash scripts/project-branch-e2e.sh "$m"
 exit $fail

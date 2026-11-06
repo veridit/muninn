@@ -292,18 +292,37 @@ git gets an id in `.muninn/project` instead).
 ```sh
 muninn project                         # id, label, scope of the current repo
 muninn remember --project "Releases are cut with make release"
-muninn sync                            # merge .muninn/memories.jsonl, write ours back
-git add .muninn && git commit -m "Share project memories"
+muninn sync                            # merge, commit, pull --rebase, push notes
 ```
 
-`.muninn/memories.jsonl` holds one memory per line, sorted by id, so diffs
-and merges stay readable. `sync` is idempotent in both directions. Only
-memories in that project's scope are written: other personal, global, client
-and project scopes are never exported, and anything that looks like a credential
-is withheld. Inside a client root only that client's project notes are shared.
-Client project sync identities include the client name, so a personal clone
-cannot alias them. A teammate pulls and runs `muninn sync`, and the memories are
-recalled in every harness bound to that repository.
+With Git 2.42 or newer, notes live on the independent `muninn-notes` branch,
+mounted at `.muninn-notes/`. The hidden mount uses the branch's name, following
+huginn's naming convention, without colliding with `.muninn/` project and client
+markers. The mount is locally excluded from the code worktree. No memory commit
+is added to main. Without a remote, sync works locally until one is configured.
+Outside Git, notes remain a local `.muninn-notes/memories.jsonl` file.
+
+Existing tracked notes require an explicit migration:
+
+```sh
+muninn sync --migrate --dry-run
+muninn sync --migrate
+# Push the single code-branch removal commit through your normal Git workflow.
+```
+
+Migration first commits and pushes the replacement notes, then removes only
+`.muninn/memories.jsonl` in one code-branch commit. Project and client markers
+are preserved. Repeating migration is harmless. A dirty tracked code worktree
+must be committed or stashed first. Git hooks remain enforced.
+
+`memories.jsonl` holds one memory per line, sorted by id. Sync is idempotent
+in both directions. Only memories in that project's scope are exported:
+other personal, global, client and project scopes are excluded, as are likely
+credentials. The local capture audit is never exported. Inside a client root
+only that client's project notes are shared. Client identities include the
+client name, so a personal clone cannot alias them. A teammate clones the code
+and runs `muninn sync` to fetch and mount the notes branch. Local edits remain
+protected if a push fails. Resolve authentication or remote failures and retry.
 
 ### Importing
 

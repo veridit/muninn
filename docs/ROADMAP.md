@@ -47,13 +47,15 @@ Decided by the user on 2026-11-05. Completed items are marked below.
 
 ## Project memories on their own branch
 
-`muninn sync` moves from `.muninn/memories.jsonl` on main to its own orphan
-branch `muninn`, checked out as the worktree `.muninn/` (excluded from main via
-`.git/info/exclude`). Tasks get their own `huginn` branch: separate things stay
-separate (user, 2026-11-05 15:47). Migration: one commit removes the tracked
-`.muninn/` from main, then the same file lands on the `muninn` branch. The
-git-branch code is one shared package used by both tools. See
-~/Projects/huginn/DESIGN.md D6.
+Shipped 2026-11-06. `muninn sync` uses orphan branch `muninn-notes`, mounted
+at `.muninn-notes/` and excluded from the code worktree. The matching visible
+name follows huginn's branch/mount convention while preserving `.muninn/`
+project and client markers. The shared implementation is
+`github.com/veridit/huginn/gitbranch` v0.1.0, not copied code.
+
+`--migrate --dry-run` previews migration. `--migrate` exports and pushes notes
+before a single code-branch commit removes only `.muninn/memories.jsonl`.
+Two-clone CLI tests verify exchange, clean main worktrees and idempotent migration.
 
 ## Compaction
 

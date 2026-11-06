@@ -9,6 +9,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/rostamlabs/rembed v0.3.0
 	github.com/spf13/cobra v1.10.2
+	github.com/veridit/huginn v0.1.0
 	modernc.org/sqlite v1.61.1
 )
 

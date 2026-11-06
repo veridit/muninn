@@ -15,7 +15,7 @@ import (
 	"github.com/veridit/muninn/internal/ingest"
 )
 
-// Line is one memory in .muninn/memories.jsonl. The file is sorted by id
+// Line is one memory in .muninn-notes/memories.jsonl. The file is sorted by id
 // and holds one object per line, so git diffs and merges stay line-based.
 type Line struct {
 	ID       string    `json:"id"`
@@ -53,6 +53,10 @@ func (s SyncStats) String() string {
 // the file, sorted. Personal and other scopes are never written. With dry,
 // nothing is written anywhere.
 func Sync(p Project, nativePath string, dry bool) (SyncStats, error) {
+	return syncFile(p, nativePath, dry, true)
+}
+
+func syncFile(p Project, nativePath string, dry, mark bool) (SyncStats, error) {
 	var st SyncStats
 	lines, err := ReadFile(p.File())
 	if err != nil && !os.IsNotExist(err) {
@@ -114,6 +118,9 @@ func Sync(p Project, nativePath string, dry bool) (SyncStats, error) {
 			return st, err
 		}
 	}
+	if !mark {
+		return st, nil
+	}
 	return st, ingest.MarkSynced(nativePath, p.Scope(), func(id string) string { return originFor(p, id) })
 }
 
@@ -129,6 +136,13 @@ func originFor(p Project, id string) string {
 // ReadFile parses a memories.jsonl file. Blank lines are ignored; a broken
 // line is an error that names its line number (merge conflicts show here).
 func ReadFile(path string) ([]Line, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("project memory file must be a regular file: %s", path)
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err

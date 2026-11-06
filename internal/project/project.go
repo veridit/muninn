@@ -30,7 +30,11 @@ func (p Project) Scope() string {
 }
 
 // File is the shared memory file inside the repository.
-func (p Project) File() string { return filepath.Join(p.Root, ".muninn", "memories.jsonl") }
+const NotesBranch = "muninn-notes"
+const NotesDir = ".muninn-notes"
+
+func (p Project) File() string       { return filepath.Join(p.Root, NotesDir, "memories.jsonl") }
+func (p Project) LegacyFile() string { return filepath.Join(p.Root, ".muninn", "memories.jsonl") }
 
 // Find resolves the project containing dir. In a git repository the id is
 // the first root commit (identical for every clone, unchanged by renames

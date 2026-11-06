@@ -28,26 +28,29 @@ func projectCmd() *cobra.Command {
 
 func syncCmd() *cobra.Command {
 	var dir string
-	var dry bool
-	c := &cobra.Command{Use: "sync", Short: "Sync this project's memories with .muninn/memories.jsonl (commit it to share with your team)",
-		Long: `sync merges .muninn/memories.jsonl into your local store (idempotent: keyed by
-the line id), then writes every memory in this project's scope back to the
-file, sorted by id so git diffs and merges stay line-based.
+	var dry, migrate bool
+	c := &cobra.Command{Use: "sync", Short: "Commit, rebase and push project memories on the muninn-notes branch",
+		Long: `sync merges .muninn-notes/memories.jsonl into your local store, writes only
+this project's memories, and uses the independent muninn-notes branch mounted
+at .muninn-notes/. The code branch stays clean. Requires Git >= 2.42.
 
-Only memories in the project scope are written. Personal, global, client
-and other projects' memories never leave your machine, and a memory that
-looks like it contains a credential is withheld.`,
+Use --migrate to move a legacy .muninn/memories.jsonl after a successful branch
+sync. A tracked legacy file is removed in one commit on the current code branch.
+Use --migrate --dry-run to inspect the plan without creating a worktree, changing
+files or contacting the remote. Existing client/project markers remain intact.
+
+Personal, global, client and other projects' memories never leave your machine.
+Credential-like project memories are withheld. Capture audits are never synced.`,
 		RunE: func(*cobra.Command, []string) error {
 			p, err := project.Find(dirOr(dir), !dry)
 			if err != nil {
 				return err
 			}
 			return withApp(func(ctx context.Context, a *app.App) error {
-				cwd, _ := os.Getwd()
-				if _, err := a.Bound("", cwd).WriteScope(p.Scope()); err != nil {
+				if _, err := a.Bound("", dirOr(dir)).WriteScope(p.Scope()); err != nil {
 					return err
 				}
-				st, err := project.Sync(p, app.NativePath(), dry)
+				st, err := project.SyncBranch(p, app.NativePath(), project.BranchOptions{DryRun: dry, Migrate: migrate})
 				if err != nil {
 					return err
 				}
@@ -56,6 +59,7 @@ looks like it contains a credential is withheld.`,
 			})
 		}}
 	c.Flags().StringVar(&dir, "dir", "", "directory (default: current)")
+	c.Flags().BoolVar(&migrate, "migrate", false, "move legacy .muninn/memories.jsonl off the code branch")
 	c.Flags().BoolVar(&dry, "dry-run", false, "show counts without writing")
 	return c
 }
