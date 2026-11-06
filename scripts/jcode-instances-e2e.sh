@@ -113,4 +113,5 @@ echo "== capture fake-provider acceptance"
 python3 scripts/capture-e2e.py "$m" "$root"
 echo "== project-memory branch clone/migration acceptance"
 bash scripts/project-branch-e2e.sh "$m"
+bash scripts/secret-hooks-e2e.sh
 exit $fail
