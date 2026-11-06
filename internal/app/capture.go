@@ -86,14 +86,8 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 	if o.Session == "" || o.Harness == "" {
 		return report, errors.New("capture requires a harness and session identity")
 	}
-	seconds := a.Cfg.Extract.TimeoutSeconds
-	if seconds <= 0 {
-		seconds = 45
-	}
-	if seconds > 120 {
-		seconds = 120
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+	budget := a.Cfg.Extract.RunTimeout()
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	if !o.DryRun {
 		tokenBytes := make([]byte, 16)
@@ -103,7 +97,7 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 		token := hex.EncodeToString(tokenBytes)
 		for {
 			now := time.Now()
-			res, err := a.DB.ExecContext(ctx, `INSERT INTO capture_lock(id,token,expires_ns) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET token=excluded.token,expires_ns=excluded.expires_ns WHERE capture_lock.expires_ns<?`, token, now.Add(time.Duration(seconds+10)*time.Second).UnixNano(), now.UnixNano())
+			res, err := a.DB.ExecContext(ctx, `INSERT INTO capture_lock(id,token,expires_ns) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET token=excluded.token,expires_ns=excluded.expires_ns WHERE capture_lock.expires_ns<?`, token, now.Add(budget+10*time.Second).UnixNano(), now.UnixNano())
 			if err != nil {
 				return report, err
 			}

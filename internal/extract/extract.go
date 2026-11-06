@@ -51,6 +51,24 @@ func (c Config) Skips(cwd string) bool {
 	return false
 }
 
+// CallTimeout bounds one model call: timeout_seconds, default 45, at most 300.
+func (c Config) CallTimeout() time.Duration {
+	s := c.TimeoutSeconds
+	if s <= 0 {
+		s = 45
+	}
+	return time.Duration(min(s, 300)) * time.Second
+}
+
+// RunTimeout bounds a whole capture run (read, every chunk's model call,
+// write, reindex). Capture runs detached and niced, so under machine load it
+// may take longer rather than fail: four model-call budgets, at most 15 min.
+// 2026-11-06: 38 runs failed at a 45 s whole-run budget while each model call
+// took 25-41 s at load 40-150.
+func (c Config) RunTimeout() time.Duration {
+	return min(4*c.CallTimeout(), 15*time.Minute)
+}
+
 func Defaults() Config {
 	return Config{AuditDays: 30, HookChunkBytes: 8192, MaxTokens: 4096, Provider: "openai-compatible", BaseURL: "https://api.deepseek.com", Model: "deepseek-flash", APIKeyEnv: "DEEPSEEK_API_KEY", EveryTurns: 12, TimeoutSeconds: 45, TopK: 12, DedupeCosine: 0.98}
 }
@@ -194,14 +212,7 @@ func Run(ctx context.Context, c Config, transcript string, known []Known) (Resul
 	if len(transcript) > 256<<10 {
 		return out, errors.New("extraction chunk exceeds 256 KiB")
 	}
-	seconds := c.TimeoutSeconds
-	if seconds <= 0 {
-		seconds = 45
-	}
-	if seconds > 120 {
-		seconds = 120
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, c.CallTimeout())
 	defer cancel()
 	input, _ := json.Marshal(struct {
 		Known      []Known `json:"known"`
@@ -230,7 +241,7 @@ func Run(ctx context.Context, c Config, transcript string, known []Known) (Resul
 		}
 		req.Header.Set("Authorization", "Bearer "+k)
 	}
-	client := &http.Client{Timeout: time.Duration(seconds) * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
+	client := &http.Client{Timeout: c.CallTimeout(), CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
 	start := time.Now()
 	resp, err := client.Do(req)
 	out.LatencyMS = time.Since(start).Milliseconds()

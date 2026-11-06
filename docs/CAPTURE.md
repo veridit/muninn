@@ -68,6 +68,11 @@ Add an `extract` object to muninn's `config.json`:
 }
 ```
 
+`timeout_seconds` bounds one model call (default 45, at most 300). A whole
+capture run may take four model-call budgets (at most 15 minutes): capture is
+detached and niced, so under machine load it finishes later instead of
+failing.
+
 `api_key_env` names an environment variable, **not** a key. If that variable is
 unset, `env_file` optionally supplies `KEY=value` lines. The file must be private
 (mode 0600). Its content is never copied into config, exported to subprocesses,

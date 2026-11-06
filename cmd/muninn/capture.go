@@ -76,14 +76,7 @@ func captureCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		seconds := cfg.Extract.TimeoutSeconds
-		if seconds <= 0 {
-			seconds = 45
-		}
-		if seconds > 120 {
-			seconds = 120
-		}
-		ctx, cancel := context.WithTimeout(cmd.Context(), time.Duration(seconds)*time.Second)
+		ctx, cancel := context.WithTimeout(cmd.Context(), cfg.Extract.RunTimeout())
 		defer cancel()
 		run := func() error {
 			cwd, _ := os.Getwd()

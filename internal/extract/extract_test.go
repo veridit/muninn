@@ -105,6 +105,23 @@ func TestTimeoutAndOff(t *testing.T) {
 	t.Log("CAPTURE timeout: caller returned within 1s; off made zero additional requests")
 }
 
+// A detached, niced capture run may take longer under load rather than
+// fail: the run budget covers several model calls, each still bounded.
+func TestRunBudgetExceedsCallBudget(t *testing.T) {
+	c := Defaults()
+	if c.CallTimeout() != 45*time.Second || c.RunTimeout() != 180*time.Second {
+		t.Fatalf("defaults: call %s run %s", c.CallTimeout(), c.RunTimeout())
+	}
+	c.TimeoutSeconds = 10_000
+	if c.CallTimeout() != 300*time.Second || c.RunTimeout() != 15*time.Minute {
+		t.Fatalf("caps: call %s run %s", c.CallTimeout(), c.RunTimeout())
+	}
+	c.TimeoutSeconds = 0
+	if c.CallTimeout() != 45*time.Second {
+		t.Fatalf("zero falls back: %s", c.CallTimeout())
+	}
+}
+
 func TestPrivateEnvFile(t *testing.T) {
 	c := Defaults()
 	c.APIKeyEnv = "CAPTURE_FILE_TEST"
