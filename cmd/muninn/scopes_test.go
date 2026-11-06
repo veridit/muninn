@@ -189,7 +189,7 @@ func TestScopeMatrixCLIAndHooks(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(home, "sessions", "matrix-jcode.json"), []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"`+scopetest.Query+`"}]}]}`), 0600); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(home, "bin", "jcode"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$JCODE_HOME/injected\"\n"), 0700); err != nil {
+				if err := os.WriteFile(filepath.Join(home, "bin", "jcode"), []byte("#!/bin/sh\n# Like jcode's parser: unknown dash-leading args exit 2.\nfor a in \"$@\"; do case \"$a\" in --mode|-S|--session) ;; -*) exit 2;; esac; done\n{ printf '%s\\n' \"$@\"; cat; } > \"$JCODE_HOME/injected\"\n"), 0700); err != nil {
 					t.Fatal(err)
 				}
 				t.Setenv("JCODE_HOME", home)
