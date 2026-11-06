@@ -75,6 +75,13 @@ func captureCmd() *cobra.Command {
 				if cwd == "" {
 					return errors.New("session cwd missing")
 				}
+				if cfg.Extract.Skips(cwd) {
+					if hook {
+						return captureLog("skipped=skip_dirs")
+					}
+					fmt.Fprintln(cmd.OutOrStdout(), "skipped: session working directory matches extract.skip_dirs")
+					return nil
+				}
 			} else {
 				data, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), (256<<10)+1))
 				if err != nil {

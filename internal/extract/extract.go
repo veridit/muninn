@@ -32,6 +32,20 @@ type Config struct {
 	TimeoutSeconds int     `json:"timeout_seconds"`
 	TopK           int     `json:"top_k"`
 	DedupeCosine   float64 `json:"dedupe_cosine"`
+	// SkipDirs lists working-directory substrings whose sessions are never
+	// captured (eval sandboxes, scratch dirs). Matching is a plain substring
+	// on the session's working directory.
+	SkipDirs []string `json:"skip_dirs,omitempty"`
+}
+
+// Skips reports whether a session in cwd must not be captured.
+func (c Config) Skips(cwd string) bool {
+	for _, s := range c.SkipDirs {
+		if s != "" && strings.Contains(cwd, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func Defaults() Config {

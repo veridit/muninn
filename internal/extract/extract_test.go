@@ -128,6 +128,17 @@ func TestPrivateEnvFile(t *testing.T) {
 	}
 }
 
+func TestSkipDirs(t *testing.T) {
+	c := Defaults()
+	if c.Skips("/home/u/.jcode/scratch/eval/repo") {
+		t.Fatal("no skip_dirs configured, nothing skipped")
+	}
+	c.SkipDirs = []string{"/scratch/", ""}
+	if !c.Skips("/home/u/.jcode/scratch/eval/repo") || c.Skips("/home/u/Projects/app") {
+		t.Fatal("skip_dirs substring match wrong")
+	}
+}
+
 func FuzzParse(f *testing.F) {
 	f.Add(validLine)
 	f.Add("{}\n{\n")

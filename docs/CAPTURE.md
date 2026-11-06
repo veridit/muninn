@@ -62,6 +62,10 @@ Set an installed **chat** model explicitly, not the embedding model. No download
 or model installation is performed by capture. Ollama does not receive a key.
 Setting `provider` to `off` disables extraction, requests, and checkpoint updates.
 
+`skip_dirs` lists working-directory substrings whose sessions are never captured,
+for example eval sandboxes: `"skip_dirs": ["/.jcode/scratch/"]`. The check runs
+before any provider call. Hook runs log `skipped=skip_dirs`.
+
 ## Manual use
 
 ```sh
