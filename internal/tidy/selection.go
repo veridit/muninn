@@ -2,11 +2,12 @@ package tidy
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 )
 
-var literalScope = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9@:_./-]*$`)
+func literalScope(s string) bool {
+	return s != "" && strings.TrimSpace(s) == s && !strings.ContainsAny(s, "*!\r\n\x00") && !strings.Contains(s, "->")
+}
 
 // Selected validates every selected move before any mutation, including duplicate
 // identities. --only is an exact source/target pair, never a pattern.
@@ -16,7 +17,7 @@ func Selected(p Plan, only string) ([]Entry, error) {
 	}
 	if only != "" {
 		a, b, ok := strings.Cut(only, "->")
-		if !ok || !literalScope.MatchString(a) || !literalScope.MatchString(b) {
+		if !ok || !literalScope(a) || !literalScope(b) {
 			return nil, fmt.Errorf("--only requires a literal SRC->DST pair")
 		}
 	}
@@ -29,7 +30,7 @@ func Selected(p Plan, only string) ([]Entry, error) {
 		if only != "" && e.Source+"->"+e.Target != only {
 			continue
 		}
-		if e.SID == "" || e.Origin == "" || len(e.Fingerprint) != 64 || !literalScope.MatchString(e.Target) || e.Target == e.Source {
+		if e.SID == "" || e.Origin == "" || len(e.Fingerprint) != 64 || !literalScope(e.Target) || e.Target == e.Source {
 			return nil, fmt.Errorf("invalid move entry %q", e.SID)
 		}
 		if seen[e.SID] || seen[e.Origin] {

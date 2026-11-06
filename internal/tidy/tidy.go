@@ -53,19 +53,20 @@ type Neighbor struct {
 	Text  string  `json:"text"`
 }
 type Entry struct {
-	SID         string         `json:"sid"`
-	Origin      string         `json:"origin"`
-	Fingerprint string         `json:"fingerprint"`
-	Source      string         `json:"source"`
-	Target      string         `json:"target"`
-	Text        string         `json:"text"` // redacted preview only, never used for writes
-	Strength    string         `json:"strength"`
-	Votes       map[string]int `json:"votes"`
-	Anchors     []string       `json:"anchors,omitempty"`
-	Neighbors   []Neighbor     `json:"neighbors"`
-	Decision    string         `json:"decision"`
-	Reason      string         `json:"reason"`
-	Judged      bool           `json:"judged"`
+	SID          string              `json:"sid"`
+	Origin       string              `json:"origin"`
+	Fingerprint  string              `json:"fingerprint"`
+	Source       string              `json:"source"`
+	Target       string              `json:"target"`
+	Text         string              `json:"text"` // redacted preview only, never used for writes
+	Strength     string              `json:"strength"`
+	Votes        map[string]int      `json:"votes"`
+	Anchors      []string            `json:"anchors,omitempty"`
+	AnchorScopes map[string][]string `json:"anchor_scopes,omitempty"`
+	Neighbors    []Neighbor          `json:"neighbors"`
+	Decision     string              `json:"decision"`
+	Reason       string              `json:"reason"`
+	Judged       bool                `json:"judged"`
 }
 type Plan struct {
 	Version  int       `json:"version"`
@@ -255,6 +256,7 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 		}
 		vote := !tied && best >= o.Majority && votes[own] <= o.OwnMax
 		matches := MatchAnchors(u.Title+" "+u.Body, anchors)
+		entry.AnchorScopes = matches
 		anchorTarget := ""
 		maxMatch := 0
 		anchorTie := false
@@ -273,7 +275,7 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 				}
 			}
 		}
-		anchor := maxMatch > 0 && !anchorTie
+		anchor := maxMatch > 0
 		target := ""
 		if vote {
 			target = voteTarget
@@ -283,11 +285,14 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 		if target != "" {
 			entry.Target = target
 			entry.Strength = "weak"
-			if vote && anchor && voteTarget == anchorTarget {
+			if vote && anchor && !anchorTie && voteTarget == anchorTarget {
 				entry.Strength = "strong"
 			}
 			entry.Anchors = matches[target]
 			entry.Reason = fmt.Sprintf("votes target=%d own=%d; matching anchors=%s", votes[target], votes[own], strings.Join(entry.Anchors, ", "))
+			if anchorTie {
+				entry.Reason += "; ambiguous anchors across scopes, target is a review proposal"
+			}
 			if vote && anchor && voteTarget != anchorTarget {
 				entry.Reason += "; conflicting anchor target " + anchorTarget
 			}

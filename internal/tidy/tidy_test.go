@@ -176,6 +176,9 @@ func TestJudgeBatchesStrongFirstRedactsAndLimits(t *testing.T) {
 		if strings.Contains(req.Messages[1].Content, secret) {
 			t.Error("sent secret")
 		}
+		if !strings.Contains(req.Messages[1].Content, `"current_scope":"global"`) || strings.Contains(req.Messages[1].Content, `"decision":`) {
+			t.Error("judge input confuses current scope with plan state")
+		}
 		var input struct {
 			Entries []Entry `json:"entries"`
 		}
