@@ -2,10 +2,12 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +17,93 @@ import (
 	"github.com/veridit/muninn/internal/ingest"
 	"github.com/veridit/muninn/internal/scopetest"
 )
+
+func TestCaptureLegacyCollisionPrivateCopy(t *testing.T) {
+	path := os.Getenv("MUNINN_REPAIR_COPY")
+	if path == "" {
+		t.Skip("explicit private backup copy only")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var original struct {
+		Memories []ingest.NativeMemory `json:"memories"`
+	}
+	if err := json.Unmarshal(raw, &original); err != nil {
+		t.Fatal(err)
+	}
+	f := scopetest.New(t)
+	b := f.Bind(t, "alpha")
+	if err := os.WriteFile(app.NativePath(), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ingest.LoadNative(app.NativePath())
+	if err != nil || len(got) != len(original.Memories) {
+		t.Fatalf("row preservation failed rows=%d err=%v", len(got), err)
+	}
+	ids := map[string]bool{}
+	payloads := map[string]int{}
+	key := func(m ingest.NativeMemory) string { m.ID, m.SID = "", ""; v, _ := json.Marshal(m); return string(v) }
+	for _, m := range original.Memories {
+		payloads[key(m)]++
+	}
+	for _, m := range got {
+		if ids[m.ID] {
+			t.Fatal("duplicate repaired ID")
+		}
+		ids[m.ID] = true
+		payloads[key(m)]--
+	}
+	for _, count := range payloads {
+		if count != 0 {
+			t.Fatal("payload fields changed")
+		}
+	}
+	fakeCapture(t, f, line("fact", "high", "Synthetic dry-run repair verification.", ""))
+	opts := captureOpts("legacy-copy-dry-run")
+	opts.DryRun = true
+	before, _ := os.ReadFile(app.NativePath())
+	r, err := b.Capture(context.Background(), f.App, opts)
+	if err != nil || len(r.Actions) == 0 {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	after, _ := os.ReadFile(app.NativePath())
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("dry-run changed repaired memories")
+	}
+	t.Logf("PRIVATE COPY: rows_before=%d rows_after=%d duplicate_ids=0 payloads_preserved=true dry_run=ok", len(original.Memories), len(got))
+}
+
+func TestCaptureLegacyCollisionIndexedIdentities(t *testing.T) {
+	f := scopetest.New(t)
+	b := f.Bind(t, "alpha")
+	rows := []ingest.NativeMemory{
+		{ID: "cap_synthetic", Origin: "capture:jcode:legacy:batch:0", Content: "Synthetic quartz first collision.", Scope: "jcode@alpha", Active: true, Created: time.Unix(100, 0).UTC()},
+		{ID: "cap_synthetic", Origin: "capture:jcode:legacy:batch:0", Content: "Synthetic quartz second collision.", Scope: "jcode@alpha", Active: true, Created: time.Unix(200, 0).UTC()},
+	}
+	raw, _ := json.Marshal(map[string]any{"version": 1, "memories": rows})
+	if err := os.WriteFile(app.NativePath(), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.App.Reindex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ingest.LoadNative(app.NativePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range got {
+		resolved, err := f.App.DB.ResolveAll(m.SID)
+		if err != nil || len(resolved) != 1 || resolved[0].Body != m.Content {
+			t.Fatal("repaired identity merged with legacy identity")
+		}
+	}
+	old, err := b.Resolve(f.App, "cap_synthetic")
+	if err != nil || old.Body != rows[0].Content {
+		t.Fatal("old ID no longer resolves to first row")
+	}
+}
 
 func TestCaptureRetryAfterNativeSaveCheckpointInterruption(t *testing.T) {
 	for _, changed := range []bool{false, true} {

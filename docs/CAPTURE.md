@@ -28,10 +28,17 @@ second time, even if the regenerated model response changes. Correction targets
 are persisted with the native row, so recovery replays the original retirement
 intent rather than a regenerated response's different target. Native saves reject
 duplicate IDs. Loading a legacy store repairs equivalent duplicate rows once,
-keeping the first row (including its timestamps). Conflicting content/metadata
-under one ID fails closed rather than discarding data. Repairs append only a
-timestamp and removed count to private `native-repairs.log` alongside the native
-store, never transcript text or IDs and never harness stdout/stderr.
+keeping the first row (including its timestamps). Conflicting legacy `cap_`
+rows with capture provenance are instead re-keyed deterministically under
+`cap_repair_`, preserving every payload field, original origin, timestamps and
+receipts. Recovered rows receive independent short IDs and indexed identities.
+Old IDs, original-origin lookups and existing supersession references continue
+to address the first row: the historical ambiguous target is not guessed or
+rewritten. SQL checkpoints are untouched, and replay selects a preserved native
+receipt's owning row before the legacy position ID. Unknown non-capture conflicts
+still fail closed. Repairs append only a timestamp and removed/re-keyed counts to
+private `native-repairs.log` alongside the native store, never transcript text or
+IDs and never harness stdout/stderr.
 
 ## Provider and privacy
 

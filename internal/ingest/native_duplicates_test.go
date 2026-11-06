@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -50,6 +51,51 @@ func TestNativeDuplicateIDsRejectedAndLegacyRepairOnce(t *testing.T) {
 		t.Fatal("repair logged repeatedly")
 	}
 	t.Log("NATIVE repair: duplicate saves refused without mutation; legacy retry duplicate collapsed once, first row retained, count-only log")
+}
+
+func TestNativeLegacyCaptureCollisionRekeyPreservesPayload(t *testing.T) {
+	first := ingest.NativeMemory{ID: "cap_legacy", Origin: "capture:jcode:synthetic:batch:0", Content: "Synthetic first quartz fact.", Scope: "jcode@alpha", Active: true, Strength: 2, Created: time.Unix(100, 0).UTC(), CaptureEvents: []string{"receipt-first"}}
+	second := first
+	second.Content, second.Category, second.Trust = "Synthetic second quartz fact.", "decision", "high"
+	second.Created, second.Updated, second.Strength = time.Unix(200, 0).UTC(), time.Unix(210, 0).UTC(), 4
+	second.CaptureEvents = []string{"receipt-second"}
+	second.CaptureSupersedes = "old-target-sid"
+	raw, _ := json.Marshal(map[string]any{"version": 1, "memories": []ingest.NativeMemory{first, second}})
+	var stableID string
+	for attempt := 0; attempt < 2; attempt++ {
+		path := filepath.Join(t.TempDir(), "memories.json")
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := ingest.LoadNative(path)
+		if err != nil || len(got) != 2 {
+			t.Fatalf("repair rows=%d err=%v", len(got), err)
+		}
+		if got[0].ID != first.ID || !strings.HasPrefix(got[1].ID, "cap_repair_") || got[0].SID == got[1].SID {
+			t.Fatal("repair identities not independent")
+		}
+		if attempt > 0 && got[1].ID != stableID {
+			t.Fatal("repair ID not deterministic")
+		}
+		stableID = got[1].ID
+		payload := got[1]
+		payload.ID, payload.SID = second.ID, second.SID
+		if !reflect.DeepEqual(payload, second) {
+			t.Fatal("repair changed a payload field")
+		}
+		before, _ := os.ReadFile(path)
+		if _, err := ingest.LoadNative(path); err != nil {
+			t.Fatal(err)
+		}
+		after, _ := os.ReadFile(path)
+		if !bytes.Equal(before, after) {
+			t.Fatal("repair was not idempotent")
+		}
+		log, _ := os.ReadFile(filepath.Join(filepath.Dir(path), "native-repairs.log"))
+		if !strings.Contains(string(log), "removed=0 rekeyed=1") || strings.Contains(string(log), first.Content) || strings.Contains(string(log), first.ID) {
+			t.Fatal("repair log not count-only")
+		}
+	}
 }
 func TestNativeConflictingDuplicateIDsFailClosed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "memories.json")

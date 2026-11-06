@@ -10,6 +10,7 @@ import (
 
 	"github.com/veridit/muninn/internal/embed"
 	"github.com/veridit/muninn/internal/ingest"
+	"github.com/veridit/muninn/internal/shortid"
 	"github.com/veridit/muninn/internal/store"
 )
 
@@ -185,7 +186,11 @@ func (ix *Indexer) IndexNative(ctx context.Context, path string, st *Stats) ([]i
 		loaded = mems
 		out := make([]Candidate, 0, len(mems))
 		for _, m := range mems {
-			out = append(out, Candidate{Key: m.ID, SID: m.SID, Origin: m.Origin, Kind: "memory", Title: m.Title, Body: m.Content, Category: m.Category,
+			origin := m.Origin
+			if strings.HasPrefix(m.ID, "cap_repair_") {
+				origin = shortid.Identity(m.ID, m.Origin)
+			}
+			out = append(out, Candidate{Key: m.ID, SID: m.SID, Origin: origin, Kind: "memory", Title: m.Title, Body: m.Content, Category: m.Category,
 				Tags: m.Tags, Scope: m.Scope, Active: m.Active, Updated: m.Updated})
 		}
 		return out, nil

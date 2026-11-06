@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -60,23 +61,46 @@ func LoadNative(path string) ([]NativeMemory, error) {
 	assignNativeSIDs(f.Memories)
 	seen := map[string]NativeMemory{}
 	out := make([]NativeMemory, 0, len(f.Memories))
-	duplicates := 0
+	duplicates, rekeyed := 0, 0
+	reserved := map[string]bool{}
+	for _, m := range f.Memories {
+		reserved[m.ID] = true
+	}
 	for _, m := range f.Memories {
 		if old, exists := seen[m.ID]; exists {
 			// Retries of the old append path could differ only in write time.
 			// Preserve the first row, but never collapse conflicting memories.
 			compare := old
 			compare.Created, compare.Updated, compare.SID = m.Created, m.Updated, m.SID
-			if !reflect.DeepEqual(compare, m) {
+			if reflect.DeepEqual(compare, m) {
+				duplicates++
+				continue
+			}
+			// Legacy capture IDs identified an output position, not its content.
+			// A regenerated response could append a different memory at that ID.
+			// Keep every payload field and retain the first row's public identity.
+			if !strings.HasPrefix(m.ID, "cap_") || !strings.HasPrefix(m.Origin, "capture:") || !strings.HasPrefix(old.Origin, "capture:") {
 				return nil, errors.New("native store has conflicting duplicate ids, refusing data loss")
 			}
-			duplicates++
-			continue
+			raw, err := json.Marshal(m)
+			if err != nil {
+				return nil, err
+			}
+			for salt := 0; ; salt++ {
+				sum := sha256.Sum256(append(append([]byte(nil), raw...), []byte(fmt.Sprintf("\x00%d", salt))...))
+				id := "cap_repair_" + hex.EncodeToString(sum[:])
+				if !reserved[id] {
+					m.ID, m.SID = id, ""
+					reserved[id] = true
+					break
+				}
+			}
+			rekeyed++
 		}
 		seen[m.ID] = m
 		out = append(out, m)
 	}
-	if duplicates > 0 {
+	if duplicates > 0 || rekeyed > 0 {
 		if err := SaveNative(path, out); err != nil {
 			return nil, fmt.Errorf("repair native duplicates: %w", err)
 		}
@@ -85,7 +109,7 @@ func LoadNative(path string) ([]NativeMemory, error) {
 		if err != nil {
 			return nil, err
 		}
-		_, writeErr := fmt.Fprintf(log, "%s native duplicate repair removed=%d\n", time.Now().UTC().Format(time.RFC3339), duplicates)
+		_, writeErr := fmt.Fprintf(log, "%s native duplicate repair removed=%d rekeyed=%d\n", time.Now().UTC().Format(time.RFC3339), duplicates, rekeyed)
 		closeErr := log.Close()
 		if writeErr != nil {
 			return nil, writeErr

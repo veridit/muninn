@@ -17,6 +17,12 @@ func Full(identity string) string {
 
 // Identity retains upstream identity independently of display ids.
 func Identity(id, origin string) string {
+	// Legacy capture rows could share both ID and origin. Repair preserves the
+	// original provenance field but gives each recovered row an independent
+	// indexed identity. References to the old origin still resolve to the first.
+	if strings.HasPrefix(id, "cap_repair_") && strings.HasPrefix(origin, "capture:") {
+		return origin + "#" + id
+	}
 	if origin != "" {
 		return origin
 	}

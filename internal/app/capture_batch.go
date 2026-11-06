@@ -63,6 +63,16 @@ func (c *captureBatch) apply(ctx context.Context, b Binding, a *App, scope strin
 	h := captureHash(action.Origin + "\x00" + scope)
 	id := "cap_" + h[:16]
 	existing, hasExisting := c.byID[id]
+	// A legacy position collision may have been re-keyed on load. Its receipt
+	// remains authoritative and must not be attached to the first row instead.
+	if c.receipts[receipt] {
+		for i, m := range c.mems {
+			if m.Origin == action.Origin && m.Scope == scope && slices.Contains(m.CaptureEvents, receipt) {
+				existing, hasExisting = i, true
+				break
+			}
+		}
+	}
 	retireTarget := ""
 	if hasExisting {
 		m := c.mems[existing]
