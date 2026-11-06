@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/veridit/muninn/internal/app"
+	"github.com/veridit/muninn/internal/harness"
 	"github.com/veridit/muninn/internal/ingest"
 	"github.com/veridit/muninn/internal/project"
 	"github.com/veridit/muninn/internal/scopetest"
@@ -124,4 +125,49 @@ func TestRescopedCanonicalHidesAndSuppressesOldMirror(t *testing.T) {
 		t.Fatal("old mirror not suppressed")
 	}
 	scopetest.Pass(t, "rescope.canonical-mirror", "client")
+}
+
+// 2026-11-06 (user): jcode's per-folder stores belong to their folder. A store
+// made in the home or a parent folder must not show in a child project, and a
+// project subfolder still sees the project root's store.
+func TestGlobalFolderStoresStayInTheirFolder(t *testing.T) {
+	f := scopetest.New(t)
+	parent := filepath.Dir(f.Cwd)
+	sub := filepath.Join(f.Cwd, "deep", "er")
+	if err := os.MkdirAll(sub, 0700); err != nil {
+		t.Fatal(err)
+	}
+	stores := map[string]string{"Parent": parent, "Here": f.Cwd, "Sub": sub, "Elsewhere": filepath.Join(parent, "elsewhere")}
+	for name, dir := range stores {
+		if _, _, err := ingest.Remember(app.NativePath(), "Folder store "+name+" quartz note", "fact", "jcode@global:"+harness.JcodeProjectHash(dir), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.App.Reindex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	home, _ := os.UserHomeDir()
+	sees := func(cwd string) map[string]bool {
+		b := f.App.Bound(filepath.Join(home, ".jcode"), cwd)
+		out := map[string]bool{}
+		for name, dir := range stores {
+			out[name] = b.Allows("jcode@global:" + harness.JcodeProjectHash(dir))
+		}
+		if !b.Allows("jcode@global") || !b.Allows("global") {
+			t.Fatalf("global session in %s lost the global store", cwd)
+		}
+		return out
+	}
+	for cwd, want := range map[string]map[string]bool{
+		parent: {"Parent": true},
+		f.Cwd:  {"Here": true},
+		sub:    {"Here": true, "Sub": true},
+	} {
+		got := sees(cwd)
+		for name := range stores {
+			if got[name] != want[name] {
+				t.Errorf("session in %s: store %s visible=%v, want %v", cwd, name, got[name], want[name])
+			}
+		}
+	}
 }

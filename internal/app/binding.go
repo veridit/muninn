@@ -141,6 +141,25 @@ func (a *App) bound(jcodeHome, cwd string) Binding {
 				current = p.Scope()
 			}
 		}
+		// jcode's own per-folder stores (jcode@global:<hash of the session's
+		// folder>) belong to that folder too (user 2026-11-06): visible from the
+		// folder itself, or from below it within the same git project. The home
+		// and other parent folders are not projects, so their stores show only there.
+		own := globalFolderStores(cwd)
+		if grow, err := a.DB.Query(`SELECT DISTINCT scope FROM units WHERE scope LIKE 'jcode@global:%'`); err != nil {
+			b.Scopes, b.Err = []string{"!*"}, err
+		} else {
+			for grow.Next() {
+				var s string
+				if grow.Scan(&s) == nil && !own[strings.TrimPrefix(s, "jcode@global:")] {
+					b.Scopes = append(b.Scopes, "!"+s)
+				}
+			}
+			if err := grow.Err(); err != nil {
+				b.Err = err
+			}
+			grow.Close()
+		}
 		if prow, err := a.DB.Query(`SELECT DISTINCT scope FROM units WHERE scope LIKE 'project:%'`); err != nil {
 			b.Scopes, b.Err = []string{"!*"}, err
 		} else {
@@ -460,4 +479,53 @@ func (b Binding) RememberSafe(ctx context.Context, a *App, content, category, sc
 	}
 	u, err := b.Resolve(a, m.ID)
 	return u, reinforced, err
+}
+
+// globalFolderStores names the jcode@global:<hash> stores that belong to a
+// session in cwd: the folder itself, and inside a git project every folder up
+// to its top level, so a subfolder session still sees the project root's
+// store. (Hashes cannot be inverted, so a subfolder's store shows only from
+// that subfolder down; tidy can move it to the project.) Outside git only the
+// exact folder counts, so a home or parent-folder store never leaks into
+// child folders.
+// Paths are tried as given, with symlinks resolved, and in the literal "~/"
+// form some jcode sessions recorded.
+func globalFolderStores(cwd string) map[string]bool {
+	own := map[string]bool{}
+	if cwd == "" {
+		return own
+	}
+	home, _ := os.UserHomeDir()
+	add := func(dir string) {
+		own[harness.JcodeProjectHash(dir)] = true
+		if home != "" {
+			if rel, err := filepath.Rel(home, dir); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+				own[harness.JcodeProjectHash("~/"+rel)] = true
+			}
+		}
+	}
+	dirs := []string{filepath.Clean(cwd)}
+	if phys, err := filepath.EvalSymlinks(cwd); err == nil && phys != dirs[0] {
+		dirs = append(dirs, phys)
+	}
+	top := ""
+	if p, err := project.Find(cwd, false); err == nil && p.Root != "" {
+		top = filepath.Clean(p.Root)
+	}
+	for _, d := range dirs {
+		add(d)
+		if top == "" {
+			continue
+		}
+		for anc := d; ; anc = filepath.Dir(anc) {
+			add(anc)
+			if anc == top || filepath.Dir(anc) == anc {
+				break
+			}
+			if rel, err := filepath.Rel(top, anc); err != nil || strings.HasPrefix(rel, "..") {
+				break
+			}
+		}
+	}
+	return own
 }
