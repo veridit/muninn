@@ -330,3 +330,29 @@ func TestStrongOnePassageIsNotAveraged(t *testing.T) {
 		t.Fatalf("max-over-passages failed: %+v", r)
 	}
 }
+
+func TestDeadlineWithDatabaseContention(t *testing.T) {
+	e := testEngine(t)
+	other, err := store.Open(e.DB.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	if _, err = other.Exec(`BEGIN IMMEDIATE`); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() { time.Sleep(time.Second); other.Exec(`ROLLBACK`); close(released) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err = e.Recall(ctx, Request{Message: "violet axolotl", Session: "locked", LearningScope: "test"})
+	elapsed := time.Since(start)
+	<-released
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed > 600*time.Millisecond {
+		t.Fatalf("SQLite contention exceeded deadline: %s", elapsed)
+	}
+}
