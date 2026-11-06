@@ -376,6 +376,15 @@ muninn config        # shows paths and effective settings
 muninn config init   # writes config.json with the defaults
 ```
 
+### Background work stays polite
+
+`capture`, `index`, `serve`, `mcp`, `gc`, `import` and `sync` lower their own
+CPU priority (nice 10, below-normal on Windows) and use a quarter of the cores
+(1 to 4). They take a little longer and never spike the machine. The recall
+hook and interactive commands such as `search` keep full speed, because a
+person is waiting on them. Set `MUNINN_FULL_SPEED=1` to opt out, or set
+`GOMAXPROCS` to choose the parallelism yourself.
+
 ## Privacy and security
 
 Everything stays on your machine. The only network call goes to the embedding

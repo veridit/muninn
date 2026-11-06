@@ -172,8 +172,8 @@ func (l *Local) Model() string { return l.model.Name }
 func (l *Local) load() error {
 	l.once.Do(func() {
 		// One Embed call fans out over cores; cap so a long index pass does
-		// not starve the machine.
-		l.e, l.err = rembed.Load(l.model.Dir(l.dataDir), rembed.WithWorkers(max(1, runtime.NumCPU()-2)))
+		// not starve the machine. GOMAXPROCS carries the background throttle.
+		l.e, l.err = rembed.Load(l.model.Dir(l.dataDir), rembed.WithWorkers(max(1, min(runtime.GOMAXPROCS(0), runtime.NumCPU()-2))))
 	})
 	return l.err
 }

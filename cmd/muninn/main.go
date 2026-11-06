@@ -21,6 +21,7 @@ import (
 	"github.com/veridit/muninn/internal/project"
 	"github.com/veridit/muninn/internal/recall"
 	"github.com/veridit/muninn/internal/search"
+	"github.com/veridit/muninn/internal/throttle"
 )
 
 type viewFlags struct {
@@ -49,6 +50,14 @@ func main() {
 		Example:       "  muninn search \"banana mode\"\n  muninn forget k7m2qx\n  muninn remember \"The corrected fact\"",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// Background work must not spike the machine: it may take longer.
+		// The recall hook and interactive commands keep full speed because a
+		// user is waiting on them.
+		PersistentPreRun: func(c *cobra.Command, _ []string) {
+			if backgroundCommands[topLevel(c)] {
+				throttle.Background()
+			}
+		},
 	}
 	root.AddCommand(versionCmd(), indexCmd(), searchCmd(), recallCmd(), rememberCmd(), forgetCmd(), showCmd(), rescopeCmd(),
 		listCmd(), relatedCmd(), statsCmd(), gcCmd(), hookCmd(), serveCmd(), mcpCmd(), tuiCmd(),
@@ -64,6 +73,19 @@ func main() {
 		fmt.Fprintln(os.Stderr, "muninn:", err)
 		os.Exit(1)
 	}
+}
+
+// backgroundCommands run at lowered priority with bounded parallelism.
+var backgroundCommands = map[string]bool{
+	"capture": true, "index": true, "serve": true, "mcp": true,
+	"gc": true, "import": true, "sync": true,
+}
+
+func topLevel(c *cobra.Command) string {
+	for c.HasParent() && c.Parent().HasParent() {
+		c = c.Parent()
+	}
+	return c.Name()
 }
 
 func withApp(fn func(ctx context.Context, a *app.App) error) error {
