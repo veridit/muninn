@@ -107,4 +107,6 @@ PY
     echo "$inst mcp: FAIL"; echo "$got"; fail=1
   fi
 done
+echo "== capture fake-provider acceptance"
+python3 scripts/capture-e2e.py "$m" "$root"
 exit $fail
