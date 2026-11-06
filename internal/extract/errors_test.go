@@ -19,6 +19,8 @@ func TestFailureClassNeverIncludesProviderDetails(t *testing.T) {
 		{errors.New("extraction HTTP request failed (details redacted)"), "provider_network"},
 		{errors.New("invalid extraction response (body redacted)"), "parse"},
 		{errors.New("capture session binding changed, start a new session"), "scope"},
+		{errors.New("constraint failed: UNIQUE constraint failed: neighbors.unit_id, neighbors.nbr_id (1555)"), "index"},
+		{errors.New("index: synthetic storage failure"), "index"},
 		{errors.New("unexpected synthetic private text"), "capture"},
 	} {
 		if got := FailureClass(tc.err); got != tc.want {

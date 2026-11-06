@@ -117,18 +117,18 @@ turn_end = ["existing-notifier", "/absolute/path/to/muninn capture --hook"]
 No shell `&` or extra daemon is required: jcode detaches observer processes. They
 read `JCODE_HOOK_EVENT`, `JCODE_HOOK_SESSION_ID`, and `JCODE_HOME`. The turn-end
 observer extracts after at least `every_turns` unprocessed user turns (12 by
- default). On first contact with an existing session, hooks retain only the last
- `every_turns * 2` user turns (24 by default), mark older message ids as seen,
- and record `backlog_skipped` in the audit. This avoids retrying years of history
- on every live turn. Skipped ids remain recoverable with manual `--backfill`.
- Session-end flushes the remainder regardless of cadence. Hook output
+default). On first contact with an existing session, hooks retain only the last
+`every_turns * 2` user turns (24 by default), mark older message ids as seen,
+and record `backlog_skipped` in the audit. This avoids retrying years of history
+on every live turn. Skipped ids remain recoverable with manual `--backfill`.
+Session-end flushes the remainder regardless of cadence. Hook output
 contains only counts/status in muninn's `data/hook.log`, never memory text.
 The complete capture invocation has a 45-second default budget, capped at 120
 seconds. Each provider chunk uses the remaining deadline with a persistence
 reserve, and completed earlier chunks survive a later timeout. Hook indexing
 caps embedding work to one unit per pass. Failures emit exactly one content-free
 summary naming `timeout`, `no_key`, `provider_http_STATUS`, `provider_network`,
-`parse`, `scope`, `config`, or `capture`, while returning success to the harness.
+`parse`, `scope`, `index`, `config`, or `capture`, while returning success to the harness.
 Failed chunks remain pending for the next hook. This does not edit or
 disable jcode's sidecar.
 

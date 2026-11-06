@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -137,7 +138,11 @@ func (a *App) IndexOptions() index.Options {
 
 // Reindex runs one incremental pass.
 func (a *App) Reindex(ctx context.Context) (index.Stats, error) {
-	return a.Indexer.Run(ctx, a.IndexOptions())
+	st, err := a.Indexer.Run(ctx, a.IndexOptions())
+	if err != nil {
+		return st, fmt.Errorf("index: %w", err)
+	}
+	return st, nil
 }
 
 // RecallOptions are the automatic-recall search settings.

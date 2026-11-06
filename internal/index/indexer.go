@@ -56,6 +56,7 @@ type Indexer struct {
 
 	deltas           []UnitDelta // concept-set changes collected during a pass
 	pipelineSwitched bool        // this pass completed a new embedding pipeline
+	embeddedHashes   []string    // vectors materialized during this pass
 }
 
 // Candidate is a unit as produced by a source, before storage.
@@ -265,6 +266,7 @@ func (ix *Indexer) indexFile(path, kind string, st *Stats, parse func() ([]Candi
 // EmbedDirty embeds units that lack a vector under the current pipeline.
 // Identical text across units shares one vector (content-addressed).
 func (ix *Indexer) EmbedDirty(ctx context.Context, st *Stats) error {
+	ix.embeddedHashes = nil
 	if ix.Embedder == nil {
 		return nil
 	}
@@ -314,6 +316,7 @@ func (ix *Indexer) EmbedDirty(ctx context.Context, st *Stats) error {
 				return err
 			}
 			st.Embedded++
+			ix.embeddedHashes = append(ix.embeddedHashes, jobs[start+i].hash)
 		}
 	}
 	if st.Embedded < pending {

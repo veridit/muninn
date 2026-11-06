@@ -201,10 +201,9 @@ func neighborChurn(t *testing.T, seed int64, maxEmbed int) {
 					t.Fatalf("round %d partial pass %d: %d duplicate edges (%v)", round, p, dups, err)
 				}
 			}
-			// TODO(knn-converge): after capped passes, a full pass must equal
-			// brute force too; it does not yet (worker lane). Until then this
-			// test asserts the crash invariant only.
-			continue
+			// Completing the remaining vectors must converge exactly, not merely
+			// avoid duplicate-edge crashes during capped observer passes.
+			ix.MaxEmbed = 0
 		}
 		if _, err := ix.Run(ctx, index.Options{NativePath: native}); err != nil {
 			t.Fatal(err)

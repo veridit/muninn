@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/gob"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -277,6 +277,30 @@ func (ix *Indexer) run(ctx context.Context, o Options) (Stats, error) {
 		return st, err
 	}
 	phase("embed")
+	// A capped previous pass may already have checkpointed the source while
+	// its vector was still missing. Materializing that vector is a graph delta
+	// even if no source text changed in this pass. Do not mix staging models.
+	if !ix.pipelineSwitched && ix.Embedder != nil && ix.DB.GetMeta("pipeline_hash") == PipelineHash(ix.Embedder.Model()) {
+		for _, hash := range ix.embeddedHashes {
+			rows, err := ix.DB.Query(`SELECT id FROM units WHERE active=1 AND content_hash=?`, hash)
+			if err != nil {
+				return st, err
+			}
+			for rows.Next() {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					rows.Close()
+					return st, err
+				}
+				dirty = append(dirty, id)
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
+				return st, err
+			}
+		}
+	}
 	if ix.pipelineSwitched {
 		// New model or prompt recipe: rebuild every neighbour list once.
 		if _, err := ix.DB.Exec(`DELETE FROM neighbors`); err != nil {
@@ -404,6 +428,20 @@ type nbr struct {
 // dirty unit if it beats its current k-th neighbour; units that lost a removed
 // neighbour are refilled. Nothing else is recomputed.
 func (ix *Indexer) UpdateNeighbors(dirty, removed []int64) error {
+	// Source reconciliation and newly embedded vectors can nominate the same
+	// unit more than once. A frontier is a set, never a multiset of offers.
+	unique := func(ids []int64) []int64 {
+		seen := map[int64]bool{}
+		out := make([]int64, 0, len(ids))
+		for _, id := range ids {
+			if !seen[id] {
+				seen[id] = true
+				out = append(out, id)
+			}
+		}
+		return out
+	}
+	dirty, removed = unique(dirty), unique(removed)
 	if len(dirty) == 0 && len(removed) == 0 {
 		return nil
 	}
@@ -539,11 +577,11 @@ func (ix *Indexer) UpdateNeighbors(dirty, removed []int64) error {
 			if len(l.nb) >= NeighborK {
 				worst := 0
 				for j := range l.nb {
-					if l.nb[j].sim < l.nb[worst].sim {
+					if l.nb[j].sim < l.nb[worst].sim || (l.nb[j].sim == l.nb[worst].sim && l.nb[j].id > l.nb[worst].id) {
 						worst = j
 					}
 				}
-				if sim <= l.nb[worst].sim {
+				if sim < l.nb[worst].sim || (sim == l.nb[worst].sim && d.id >= l.nb[worst].id) {
 					continue
 				}
 				l.nb[worst] = nbr{d.id, sim}
@@ -571,7 +609,12 @@ func topK(q []byte, id int64, vecs []vecRow) []nbr {
 			best = append(best, nbr{v.id, embed.DotQ(q, v.q)})
 		}
 	}
-	sort.Slice(best, func(i, j int) bool { return best[i].sim > best[j].sim })
+	sort.Slice(best, func(i, j int) bool {
+		if best[i].sim == best[j].sim {
+			return best[i].id < best[j].id
+		}
+		return best[i].sim > best[j].sim
+	})
 	if len(best) > NeighborK {
 		best = best[:NeighborK]
 	}
@@ -581,6 +624,40 @@ func topK(q []byte, id int64, vecs []vecRow) []nbr {
 // writeList replaces one unit's stored neighbour list. Duplicate neighbour
 // ids (from any caller) collapse to the highest similarity.
 func (ix *Indexer) writeList(id int64, nb []nbr) error {
+	// Keep the storage boundary replay-safe too, including duplicate IDs in
+	// a batched caller. Sort and cap after deduplication, not before it.
+	byID := map[int64]float32{}
+	for _, n := range nb {
+		if n.id == id {
+			continue
+		}
+		if old, ok := byID[n.id]; !ok || n.sim > old {
+			byID[n.id] = n.sim
+		}
+	}
+	nb = make([]nbr, 0, len(byID))
+	for nid, sim := range byID {
+		nb = append(nb, nbr{nid, sim})
+	}
+	sort.Slice(nb, func(i, j int) bool {
+		if nb[i].sim == nb[j].sim {
+			return nb[i].id < nb[j].id
+		}
+		return nb[i].sim > nb[j].sim
+	})
+	if len(nb) > NeighborK {
+		nb = nb[:NeighborK]
+	}
+	if _, err := ix.DB.Exec(`SAVEPOINT neighbor_list`); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			ix.DB.Exec(`ROLLBACK TO neighbor_list`)
+			ix.DB.Exec(`RELEASE neighbor_list`)
+		}
+	}()
 	if _, err := ix.DB.Exec(`DELETE FROM neighbors WHERE unit_id=?`, id); err != nil {
 		return err
 	}
@@ -598,7 +675,9 @@ func (ix *Indexer) writeList(id int64, nb []nbr) error {
 	}
 	nb = uniq
 	if len(nb) == 0 {
-		return nil
+		_, err := ix.DB.Exec(`RELEASE neighbor_list`)
+		committed = err == nil
+		return err
 	}
 	var sb strings.Builder
 	args := make([]any, 0, 3*len(nb))
@@ -610,7 +689,12 @@ func (ix *Indexer) writeList(id int64, nb []nbr) error {
 		sb.WriteString("(?,?,?)")
 		args = append(args, id, b.id, b.sim)
 	}
-	_, err := ix.DB.Exec(sb.String(), args...)
+	sb.WriteString(` ON CONFLICT(unit_id,nbr_id) DO UPDATE SET sim=excluded.sim`)
+	if _, err := ix.DB.Exec(sb.String(), args...); err != nil {
+		return err
+	}
+	_, err := ix.DB.Exec(`RELEASE neighbor_list`)
+	committed = err == nil
 	return err
 }
 

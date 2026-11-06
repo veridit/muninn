@@ -16,6 +16,9 @@ func FailureClass(err error) string {
 		return "timeout"
 	}
 	message := err.Error()
+	if strings.Contains(message, "index:") || strings.Contains(message, "neighbors.") || strings.Contains(message, "index busy") {
+		return "index"
+	}
 	var status int
 	if _, e := fmt.Sscanf(message, "extraction HTTP status %d", &status); e == nil && status >= 100 && status <= 599 {
 		return fmt.Sprintf("provider_http_%d", status)
