@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -525,6 +526,16 @@ func (ix *Indexer) UpdateNeighbors(dirty, removed []int64) error {
 		l := lists[v.id]
 		for _, d := range offers {
 			sim := embed.DotQ(d.q, v.q)
+			// An offered unit may already be in this list (it was re-embedded,
+			// or a partial pass was interrupted): update in place, never add a
+			// second edge to the same neighbour.
+			if j := slices.IndexFunc(l.nb, func(n nbr) bool { return n.id == d.id }); j >= 0 {
+				if l.nb[j].sim != sim {
+					l.nb[j].sim = sim
+					l.changed = true
+				}
+				continue
+			}
 			if len(l.nb) >= NeighborK {
 				worst := 0
 				for j := range l.nb {
@@ -567,11 +578,25 @@ func topK(q []byte, id int64, vecs []vecRow) []nbr {
 	return best
 }
 
-// writeList replaces one unit's stored neighbour list.
+// writeList replaces one unit's stored neighbour list. Duplicate neighbour
+// ids (from any caller) collapse to the highest similarity.
 func (ix *Indexer) writeList(id int64, nb []nbr) error {
 	if _, err := ix.DB.Exec(`DELETE FROM neighbors WHERE unit_id=?`, id); err != nil {
 		return err
 	}
+	seen := make(map[int64]int, len(nb))
+	uniq := nb[:0:0]
+	for _, b := range nb {
+		if j, ok := seen[b.id]; ok {
+			if b.sim > uniq[j].sim {
+				uniq[j].sim = b.sim
+			}
+			continue
+		}
+		seen[b.id] = len(uniq)
+		uniq = append(uniq, b)
+	}
+	nb = uniq
 	if len(nb) == 0 {
 		return nil
 	}

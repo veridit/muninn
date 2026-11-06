@@ -130,11 +130,20 @@ func checkNeighbors(t *testing.T, db *store.DB, round int) {
 
 func TestNeighborsMatchBruteForceUnderChurn(t *testing.T) {
 	for seed := int64(1); seed <= 8; seed++ {
-		t.Run(fmt.Sprint("seed", seed), func(t *testing.T) { neighborChurn(t, seed) })
+		t.Run(fmt.Sprint("seed", seed), func(t *testing.T) { neighborChurn(t, seed, 0) })
 	}
 }
 
-func neighborChurn(t *testing.T, seed int64) {
+// Hooks index with a small MaxEmbed, so a unit can be re-offered to a list
+// that already holds it. 2026-11-06 this produced duplicate (unit,nbr) rows
+// and a UNIQUE failure that broke recall on the live DB.
+func TestNeighborsPartialPassesNoDuplicateEdges(t *testing.T) {
+	for seed := int64(1); seed <= 8; seed++ {
+		t.Run(fmt.Sprint("seed", seed), func(t *testing.T) { neighborChurn(t, seed, 1+int(seed)%3) })
+	}
+}
+
+func neighborChurn(t *testing.T, seed int64, maxEmbed int) {
 	dir := t.TempDir()
 	db, err := store.Open(filepath.Join(dir, "m.db"))
 	if err != nil {
@@ -180,6 +189,23 @@ func neighborChurn(t *testing.T, seed int64) {
 			}
 		}
 		save()
+		if maxEmbed > 0 {
+			// Several capped passes, as consecutive hook runs would do.
+			ix.MaxEmbed = maxEmbed
+			for p := 0; p < 1+r.Intn(3); p++ {
+				if _, err := ix.Run(ctx, index.Options{NativePath: native}); err != nil {
+					t.Fatalf("round %d partial pass %d: %v", round, p, err)
+				}
+				var dups int
+				if err := db.QueryRow(`SELECT count(*) FROM (SELECT unit_id, nbr_id FROM neighbors GROUP BY 1,2 HAVING count(*) > 1)`).Scan(&dups); err != nil || dups != 0 {
+					t.Fatalf("round %d partial pass %d: %d duplicate edges (%v)", round, p, dups, err)
+				}
+			}
+			// TODO(knn-converge): after capped passes, a full pass must equal
+			// brute force too; it does not yet (worker lane). Until then this
+			// test asserts the crash invariant only.
+			continue
+		}
 		if _, err := ix.Run(ctx, index.Options{NativePath: native}); err != nil {
 			t.Fatal(err)
 		}
