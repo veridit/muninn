@@ -160,8 +160,13 @@ func Open(path string) (*DB, error) {
 	}
 	// mmap: search scans the narrow tables; through the default pager every
 	// page was a pread syscall (profiled at ~65% of a warm search).
-	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)" +
-		"&_pragma=mmap_size(1073741824)&_pragma=cache_size(-32768)"
+	// _txlock=immediate: every BeginTx here writes. A deferred transaction
+	// that reads first and then writes cannot upgrade after another process
+	// commits, and SQLite returns SQLITE_BUSY at once without consulting
+	// busy_timeout (2026-11-06: 4 concurrent capture hooks failed this way).
+	// BEGIN IMMEDIATE takes the write lock up front and waits instead.
+	dsn := "file:" + path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)" +
+		"&_pragma=mmap_size(1073741824)&_pragma=cache_size(-32768)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
