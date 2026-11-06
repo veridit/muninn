@@ -81,6 +81,29 @@ func TestRecallGuardsAndDedupe(t *testing.T) {
 	}
 }
 
+// Harness notices carry log text that matches memories by vocabulary only
+// (2026-11-06: a failed Xcode build notice in a WebKit session recalled Brovs
+// and Frogs memories). They are not the user asking, so recall stays quiet.
+func TestRecallSkipsHarnessNotices(t *testing.T) {
+	db := setup(t)
+	e := engine(db, failing{})
+	ctx := context.Background()
+	for _, msg := range []string{
+		"**Background task** `496022ps4i` · `Run build` (`bash`) · ✗ failed · banana mode",
+		"🐝 **Swarm await finished**\n\nAll members done. banana mode",
+		"[Scheduled task]\nA scheduled task for this session is now due: banana mode",
+		"[auto] Your session was interrupted by a server reload. banana mode",
+		"You have 3 incomplete todos. Continue working. banana mode",
+	} {
+		if r, _ := e.Recall(ctx, recall.Request{Message: msg}); r.Block != "" || r.Skipped != "harness notice" {
+			t.Fatalf("notice recalled: %q -> %+v", msg, r)
+		}
+	}
+	if r, _ := e.Recall(ctx, recall.Request{Message: "What about banana mode? The background task failed."}); r.Block == "" {
+		t.Fatalf("a real question mentioning a background task must still recall: %+v", r)
+	}
+}
+
 func TestTruncateRuneSafe(t *testing.T) {
 	s := strings.Repeat("ø", 10) // 2 bytes each
 	if got := recall.Truncate(s, 5); got != "øø" {

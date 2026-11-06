@@ -73,6 +73,25 @@ func IsOwnOutput(text string) bool {
 	return strings.Contains(text, Marker) || strings.Contains(text, "[muninn recall]")
 }
 
+// harnessNotices start messages the harness writes into the user turn
+// (background-task results, swarm awaits, schedules, auto-continues). They
+// are not the user asking anything, and their log text matches unrelated
+// memories by vocabulary alone.
+var harnessNotices = []string{
+	"**Background task**", "🐝 **Swarm await", "[Scheduled task]", "[auto] ",
+	"<system-reminder>",
+}
+
+// IsHarnessNotice reports whether msg is a harness-generated notice.
+func IsHarnessNotice(msg string) bool {
+	for _, p := range harnessNotices {
+		if strings.HasPrefix(msg, p) {
+			return true
+		}
+	}
+	return strings.HasPrefix(msg, "You have ") && strings.Contains(msg, " incomplete todo")
+}
+
 // Truncate cuts s to at most n bytes on a rune boundary.
 func Truncate(s string, n int) string {
 	if len(s) <= n {
@@ -94,6 +113,9 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 	}
 	if IsOwnOutput(msg) {
 		return Response{Skipped: "own injection"}, nil
+	}
+	if IsHarnessNotice(msg) {
+		return Response{Skipped: "harness notice"}, nil
 	}
 	o := e.Options
 	if len(r.Scopes) > 0 {
