@@ -191,6 +191,7 @@ func ReadGraph(ctx context.Context, path string) (Graph, error) {
 	}
 	return g, tx.Commit()
 }
+
 // redacted masks credential-shaped tokens in text bound for the judge
 // provider and plan files. URLs stay readable: secrets are judged, not hidden.
 func redacted(s string) string { return project.MaskCredentials(s) }
