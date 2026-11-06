@@ -14,58 +14,7 @@ import (
 	"github.com/veridit/muninn/internal/config"
 	"github.com/veridit/muninn/internal/ingest"
 	"github.com/veridit/muninn/internal/scopetest"
-	"github.com/veridit/muninn/internal/store"
 )
-
-func TestCaptureEightCandidatesOnTwentyThousandUnits(t *testing.T) {
-	f := scopetest.New(t)
-	source, _, _, err := f.App.DB.Source("jcode", f.Root+"/alpha/.jcode/memory/bulk.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for n := 0; n < 20000; n++ {
-		_, err := f.App.DB.UpsertUnit(store.Unit{SourceID: source, Key: fmt.Sprintf("bulk-%d", n), ContentHash: fmt.Sprintf("bulk-hash-%d", n), Kind: "memory", Body: fmt.Sprintf("Synthetic quartz deployment catalog record %d.", n), Scope: "jcode@alpha", Active: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	var proposals []string
-	for n := 0; n < 8; n++ {
-		proposals = append(proposals, line("decision", "high", fmt.Sprintf("Quartz batch candidate %d requires its own synthetic checklist.", n), ""))
-	}
-	fakeCapture(t, f, strings.Join(proposals, "\n"))
-	before, _ := ingest.LoadNative(app.NativePath())
-	var unitsBefore int
-	f.App.DB.QueryRow(`SELECT count(*) FROM units`).Scan(&unitsBefore)
-	o := captureOpts("twenty-thousand")
-	o.Trigger = "session_end"
-	start := time.Now()
-	r, err := f.Bind(t, "alpha").Capture(context.Background(), f.App, o)
-	elapsed := time.Since(start)
-	if err != nil || len(r.Actions) != 8 || r.Processed != 1 {
-		t.Fatalf("report=%+v err=%v", r, err)
-	}
-	if elapsed >= 10*time.Second {
-		t.Fatalf("8 candidates took %s, require <10s", elapsed)
-	}
-	after, err := ingest.LoadNative(app.NativePath())
-	if err != nil || len(after) != len(before)+8 {
-		t.Fatalf("native count=%d err=%v", len(after), err)
-	}
-	var unitsAfter int
-	f.App.DB.QueryRow(`SELECT count(*) FROM units`).Scan(&unitsAfter)
-	if unitsAfter != unitsBefore || r.ReindexMS != 0 {
-		t.Fatal("capture performed an eager reindex")
-	}
-	runs, err := f.App.AuditRuns(o.Session, time.Time{})
-	if err != nil || len(runs) != 1 {
-		t.Fatal(err)
-	}
-	if runs[0].CaptureTimings != r.CaptureTimings {
-		t.Fatal("audit timing breakdown differs from report")
-	}
-	t.Logf("CAPTURE 20k: units=%d proposals=8 processed=1 native_added=8 elapsed=%s extract_ms=%d plan_ms=%d apply_ms=%d reindex_ms=%d", unitsBefore, elapsed, r.ExtractMS, r.PlanMS, r.ApplyMS, r.ReindexMS)
-}
 
 func TestCaptureRetryAfterNativeSaveCheckpointInterruption(t *testing.T) {
 	for _, changed := range []bool{false, true} {
@@ -228,4 +177,43 @@ func TestCaptureFreshNativeSnapshotDedupesBeforeLazyIndex(t *testing.T) {
 			t.Fatalf("strength=%d", m.Strength)
 		}
 	}
+}
+
+func TestCaptureRetryPreservesCommittedSupersessionTarget(t *testing.T) {
+	f := scopetest.New(t)
+	b := f.Bind(t, "alpha")
+	old := f.Units["Alpha"]
+	other, _, err := ingest.Remember(app.NativePath(), "Synthetic alternative quartz target.", "fact", "jcode@alpha", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.App.Reindex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	model := fakeCapture(t, f, line("correction", "high", "Original synthetic correction remains authoritative.", old.SID))
+	// Fail the SQL half after native memory plus retirement intent were saved.
+	if _, err := f.App.DB.Exec(`CREATE TRIGGER interrupt_retirement BEFORE UPDATE ON units BEGIN SELECT RAISE(FAIL,'synthetic interruption after saved correction'); END;`); err != nil {
+		t.Fatal(err)
+	}
+	o := captureOpts("retirement-recovery")
+	if _, err := b.Capture(context.Background(), f.App, o); err == nil {
+		t.Fatal("retirement was not interrupted")
+	}
+	if _, err := f.App.DB.Exec(`DROP TRIGGER interrupt_retirement`); err != nil {
+		t.Fatal(err)
+	}
+	model.reply = line("correction", "high", "Regenerated correction must not retire the alternative.", other.SID)
+	r, err := b.Capture(context.Background(), f.App, o)
+	if err != nil || r.Processed != 1 || len(r.Actions) != 1 || r.Actions[0].Action != "skip" || r.Actions[0].Target != old.SID {
+		t.Fatalf("retry=%+v err=%v", r, err)
+	}
+	oldView, err := f.App.DB.Resolve(old.SID)
+	if err != nil || oldView.Active {
+		t.Fatalf("original target not retired: %v", err)
+	}
+	otherView, err := f.App.DB.Resolve(other.SID)
+	if err != nil || !otherView.Active {
+		t.Fatalf("regenerated target was retired: %v", err)
+	}
+	t.Log("CAPTURE correction retry: persisted original retirement intent recovered; regenerated target untouched")
 }

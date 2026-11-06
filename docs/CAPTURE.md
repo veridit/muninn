@@ -24,7 +24,9 @@ transcript-query cosine score.
 
 Receipts and deterministic native IDs are saved with the memory. Retrying after
 a process dies between save and checkpoint does not append or reinforce it a
-second time, even if the regenerated model response changes. Native saves reject
+second time, even if the regenerated model response changes. Correction targets
+are persisted with the native row, so recovery replays the original retirement
+intent rather than a regenerated response's different target. Native saves reject
 duplicate IDs. Loading a legacy store repairs equivalent duplicate rows once,
 keeping the first row (including its timestamps). Conflicting content/metadata
 under one ID fails closed rather than discarding data. Repairs append only a

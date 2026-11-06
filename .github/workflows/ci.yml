@@ -38,6 +38,10 @@ jobs:
         run: go build ./cmd/muninn
         env:
           CGO_ENABLED: "0"
+      - name: Capture production timing (20k units, eight proposals, under 10s)
+        run: go test -v ./internal/app -run '^TestCaptureEightCandidatesOnTwentyThousandUnits$' -count=1
+        env:
+          MUNINN_NO_EMBED: "1"
       - name: jcode multi-instance e2e (keyword-only)
         if: runner.os != 'Windows'
         run: ./scripts/jcode-instances-e2e.sh

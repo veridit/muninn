@@ -18,19 +18,20 @@ import (
 
 // NativeMemory is a memory muninn owns (created with `muninn remember`).
 type NativeMemory struct {
-	Trust         string    `json:"trust,omitempty"`
-	CaptureEvents []string  `json:"capture_events,omitempty"`
-	ID            string    `json:"id"`
-	SID           string    `json:"sid"`
-	Title         string    `json:"title,omitempty"`
-	Content       string    `json:"content"`
-	Category      string    `json:"category,omitempty"`
-	Tags          []string  `json:"tags,omitempty"`
-	Scope         string    `json:"scope,omitempty"`
-	Active        bool      `json:"active"`
-	Strength      int       `json:"strength"`
-	Created       time.Time `json:"created"`
-	Updated       time.Time `json:"updated"`
+	CaptureSupersedes string    `json:"capture_supersedes,omitempty"`
+	Trust             string    `json:"trust,omitempty"`
+	CaptureEvents     []string  `json:"capture_events,omitempty"`
+	ID                string    `json:"id"`
+	SID               string    `json:"sid"`
+	Title             string    `json:"title,omitempty"`
+	Content           string    `json:"content"`
+	Category          string    `json:"category,omitempty"`
+	Tags              []string  `json:"tags,omitempty"`
+	Scope             string    `json:"scope,omitempty"`
+	Active            bool      `json:"active"`
+	Strength          int       `json:"strength"`
+	Created           time.Time `json:"created"`
+	Updated           time.Time `json:"updated"`
 	// Origin identifies an imported memory ("engram:<sync_id>",
 	// "jcode@<instance>:<project>/<id>"); OriginHash is the hash of the
 	// upstream text at the last import. Both are empty for native memories.

@@ -9,6 +9,7 @@ import (
 	"github.com/veridit/muninn/internal/extract"
 	"github.com/veridit/muninn/internal/ingest"
 	"github.com/veridit/muninn/internal/project"
+	"github.com/veridit/muninn/internal/store"
 )
 
 // captureBatch is a chunk-local native snapshot. Receipts and deterministic IDs
@@ -59,12 +60,37 @@ func (c *captureBatch) apply(ctx context.Context, b Binding, a *App, scope strin
 		return fmt.Errorf("secret candidate refused")
 	}
 	now := time.Now().UTC()
-	if action.Action == "supersede" && action.Trust == "high" {
+	h := captureHash(action.Origin + "\x00" + scope)
+	id := "cap_" + h[:16]
+	existing, hasExisting := c.byID[id]
+	retireTarget := ""
+	if hasExisting {
+		m := c.mems[existing]
+		if m.Origin != action.Origin || m.Scope != scope {
+			return fmt.Errorf("capture native id collision")
+		}
+		// Recovery must replay the stored intent, not a regenerated model's
+		// potentially different target at the same deterministic position.
+		retireTarget = m.CaptureSupersedes
+	} else if !c.receipts[receipt] && action.Action == "supersede" && action.Trust == "high" {
+		retireTarget = action.Target
+	}
+	if retireTarget != "" {
 		// Revalidate all owned mirrors before any file mutation. Upstream stores are
 		// never written. Retirement is part of this chunk's single native save.
-		units, err := a.DB.ResolveAll(action.Target)
-		if err != nil {
-			return err
+		targetPresent := true
+		if hasExisting {
+			if err := a.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM units WHERE sid=?)`, retireTarget).Scan(&targetPresent); err != nil {
+				return err
+			}
+		}
+		var units []store.Unit
+		if targetPresent {
+			var err error
+			units, err = a.DB.ResolveAll(retireTarget)
+			if err != nil {
+				return err
+			}
 		}
 		mirrors := false
 		for n, u := range units {
@@ -86,7 +112,7 @@ func (c *captureBatch) apply(ctx context.Context, b Binding, a *App, scope strin
 				return err
 			}
 		}
-		if i, ok := c.bySID[action.Target]; ok {
+		if i, ok := c.bySID[retireTarget]; ok {
 			if _, err := b.WriteScope(c.mems[i].Scope); err != nil {
 				return err
 			}
@@ -94,7 +120,19 @@ func (c *captureBatch) apply(ctx context.Context, b Binding, a *App, scope strin
 			c.mems[i].Updated = now
 			c.dirty = true
 		}
-		c.retire[action.Target] = mirrors
+		c.retire[retireTarget] = mirrors
+	}
+	if hasExisting {
+		m := &c.mems[existing]
+		if !slices.Contains(m.CaptureEvents, receipt) {
+			m.CaptureEvents = append(m.CaptureEvents, receipt)
+			c.dirty = true
+		}
+		c.receipts[receipt] = true
+		action.Action = "skip"
+		action.Reason = "capture id already persisted before checkpoint"
+		action.Target = retireTarget
+		return nil
 	}
 	if c.receipts[receipt] {
 		action.Action = "skip"
@@ -136,26 +174,8 @@ func (c *captureBatch) apply(ctx context.Context, b Binding, a *App, scope strin
 	if action.Action == "skip" {
 		return nil
 	}
-	h := captureHash(action.Origin + "\x00" + scope)
-	id := "cap_" + h[:16]
-	if i, ok := c.byID[id]; ok {
-		m := &c.mems[i]
-		if m.Origin != action.Origin || m.Scope != scope {
-			return fmt.Errorf("capture native id collision")
-		}
-		// A regenerated provider response can change after a crash. The first
-		// committed proposal owns this deterministic position, never append it again.
-		if !slices.Contains(m.CaptureEvents, receipt) {
-			m.CaptureEvents = append(m.CaptureEvents, receipt)
-			c.dirty = true
-		}
-		c.receipts[receipt] = true
-		action.Action = "skip"
-		action.Reason = "capture id already persisted before checkpoint"
-		return nil
-	}
 	c.byID[id] = len(c.mems)
-	c.mems = append(c.mems, ingest.NativeMemory{ID: id, Origin: action.Origin, Content: action.Content, Category: action.Category, Trust: action.Trust, Scope: scope, Active: true, Strength: 1, Created: now, Updated: now, CaptureEvents: []string{receipt}})
+	c.mems = append(c.mems, ingest.NativeMemory{ID: id, Origin: action.Origin, Content: action.Content, Category: action.Category, Trust: action.Trust, Scope: scope, Active: true, Strength: 1, Created: now, Updated: now, CaptureEvents: []string{receipt}, CaptureSupersedes: retireTarget})
 	c.receipts[receipt] = true
 	c.dirty = true
 	return nil
