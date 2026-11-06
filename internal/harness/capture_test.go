@@ -2,8 +2,11 @@ package harness
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -55,6 +58,62 @@ func TestCaptureJcodeSnapshotJournalAndNoise(t *testing.T) {
 		t.Fatal("session path traversal accepted")
 	}
 	t.Log("CAPTURE journal: duplicate checkpoint entry ignored; tool/DM/system noise excluded; ids survive checkpoint")
+}
+
+// 2026-11-06: a 308 MB Brovs snapshot failed every capture under the old
+// 256 MB whole-file decode. The streaming reader has no size cap, tolerates
+// unknown keys in any order (including before working_dir), and drops tool
+// payloads instead of holding them.
+func TestCaptureLargeSnapshotStreams(t *testing.T) {
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, "sessions"), 0700)
+	path := filepath.Join(home, "sessions", "big.json")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blob := strings.Repeat("x", 64<<10) // 64 KiB tool payload per message
+	f.WriteString(`{"meta":{"nested":[1,{"a":[2,3]}],"s":"` + blob[:1000] + `"},"messages":[`)
+	const n = 200 // ~13 MiB: the old reader capped at oldSnapshotCap below
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			f.WriteString(",")
+		}
+		m := map[string]any{"id": "m" + strconv.Itoa(i), "role": "assistant", "content": []map[string]string{{"type": "tool_use", "text": blob}, {"type": "text", "text": "note " + strconv.Itoa(i)}}}
+		b, _ := json.Marshal(m)
+		f.Write(b)
+	}
+	f.WriteString(`],"working_dir":` + strconv.Quote(home) + `,"trailer":null}`)
+	f.Close()
+	// The old whole-file decode, scaled down: it fails on this fixture.
+	const oldSnapshotCap = 8 << 20
+	if fi, _ := os.Stat(path); fi.Size() <= oldSnapshotCap {
+		t.Fatalf("fixture too small: %d", fi.Size())
+	}
+	of, _ := os.Open(path)
+	var old struct {
+		Messages []captureStored `json:"messages"`
+	}
+	if json.NewDecoder(io.LimitReader(of, oldSnapshotCap)).Decode(&old) == nil {
+		t.Fatal("old capped decode unexpectedly succeeded: fixture does not exercise the bug")
+	}
+	of.Close()
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	got, err := ReadCaptureSession(home, "big")
+	if err != nil {
+		t.Fatalf("large snapshot: %v", err)
+	}
+	runtime.ReadMemStats(&after)
+	if got.Cwd != home || len(got.Messages) != n || got.Messages[n-1].Text != "note "+strconv.Itoa(n-1) {
+		t.Fatalf("cwd=%q messages=%d last=%q", got.Cwd, len(got.Messages), got.Messages[len(got.Messages)-1].Text)
+	}
+	// Tool payloads are dropped while streaming: retained heap stays far
+	// below the file size.
+	if grown := int64(after.HeapInuse) - int64(before.HeapInuse); grown > 4<<20 {
+		t.Fatalf("heap grew %d bytes for a %d-byte snapshot", grown, n*len(blob))
+	}
 }
 
 func TestCaptureGenericStableIdentities(t *testing.T) {

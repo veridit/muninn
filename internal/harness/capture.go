@@ -68,16 +68,33 @@ func ReadCaptureSession(home, id string) (CaptureTranscript, error) {
 	if err != nil {
 		return out, err
 	}
-	var snap struct {
-		WorkingDir string          `json:"working_dir"`
-		Messages   []captureStored `json:"messages"`
-	}
-	err = json.NewDecoder(io.LimitReader(f, 256<<20)).Decode(&snap)
+	// Long-lived sessions reach hundreds of MB (2026-11-06: a 308 MB Brovs
+	// snapshot failed every capture under the old 256 MB whole-file decode).
+	// Stream the top-level object and decode messages one at a time, so
+	// memory stays bounded by the largest single message.
+	var snapMessages []captureStored
+	cwd, err := streamSnapshot(bufio.NewReaderSize(f, 1<<20), func(m captureStored) {
+		// Keep identity and text blocks only; tool payloads are the bulk.
+		// Id-less messages keep every block: their id is a hash of it.
+		if m.ID == "" {
+			snapMessages = append(snapMessages, m)
+			return
+		}
+		kept := m
+		kept.Content = kept.Content[:0]
+		for _, b := range m.Content {
+			if b.Type == "text" {
+				kept.Content = append(kept.Content, b)
+			}
+		}
+		snapMessages = append(snapMessages, kept)
+	})
 	f.Close()
 	if err != nil {
 		return out, errors.New("invalid jcode session snapshot")
 	}
-	out.Cwd = snap.WorkingDir
+	out.Cwd = cwd
+	snap := struct{ Messages []captureStored }{snapMessages}
 	seen := map[string]bool{}
 	add := func(ms []captureStored) {
 		for _, m := range ms {
