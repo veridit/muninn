@@ -32,8 +32,70 @@ type Line struct {
 // holds a credential is never written into a repository.
 var secretRe = regexp.MustCompile(`(sk-(proj-|ant-|or-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(API_KEY|SECRET|TOKEN|PASSWORD)[A-Z_]*=[^\s<$"'{]{8,})`)
 
-// LooksSecret reports whether text matches a credential pattern.
-func LooksSecret(text string) bool { return secretRe.MatchString(text) }
+// LooksSecret reports whether text matches a credential pattern or holds a
+// capability URL.
+func LooksSecret(text string) bool {
+	return secretRe.MatchString(text) || capabilityURLs(text) != text
+}
+
+// Capability URLs: an http(s) URL whose path holds a random-looking segment
+// is a bearer secret; anyone with the URL has access (2026-11-06: a private
+// Fastmail-hosted PWA path was recalled into an unrelated session).
+
+// Redact replaces credentials and capability URLs with a placeholder so text
+// can be shown without disclosing them. It reports whether anything changed.
+func Redact(text string) (string, bool) {
+	out := secretRe.ReplaceAllString(text, "[secret withheld]")
+	out = capabilityURLs(out)
+	return out, out != text
+}
+
+func capabilityURLs(text string) string {
+	return urlRe.ReplaceAllStringFunc(text, func(u string) string {
+		for _, seg := range strings.Split(u, "/")[3:] {
+			for _, part := range strings.FieldsFunc(seg, func(r rune) bool { return r == '-' || r == '_' || r == '.' }) {
+				if isCapabilityToken(part) {
+					return "[capability URL withheld]"
+				}
+			}
+		}
+		return u
+	})
+}
+
+var urlRe = regexp.MustCompile(`https?://[^\s<>"'` + "`" + `)\]]+`)
+
+// isCapabilityToken: 24+ alphanumerics with both letters and digits and
+// mixed character classes, the shape of a random bearer path, not a word.
+func isCapabilityToken(s string) bool {
+	if len(s) < 24 {
+		return false
+	}
+	var letters, digits, upper, lower, nonhex int
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+			digits++
+		case r >= 'a' && r <= 'z':
+			letters++
+			lower++
+			if r > 'f' {
+				nonhex++
+			}
+		case r >= 'A' && r <= 'Z':
+			letters++
+			upper++
+			nonhex++
+		default:
+			return false
+		}
+	}
+	// Lowercase hex (commit and content hashes) is public, not a key.
+	if nonhex == 0 {
+		return false
+	}
+	return letters > 0 && digits > 0 && (upper > 0 && lower > 0 || digits >= 4)
+}
 
 // SyncStats reports one sync.
 type SyncStats struct {
