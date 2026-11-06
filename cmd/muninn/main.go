@@ -223,7 +223,7 @@ func ensureFresh(ctx context.Context, a *app.App) (index.Stats, error) {
 }
 
 func rememberCmd() *cobra.Command {
-	var category, scope, home string
+	var category, scope, home, safeReason string
 	var tags []string
 	var inProject bool
 	c := &cobra.Command{Use: "remember <text>", Short: "Store a memory", Args: cobra.MinimumNArgs(1),
@@ -237,7 +237,7 @@ func rememberCmd() *cobra.Command {
 			}
 			return withApp(func(ctx context.Context, a *app.App) error {
 				cwd, _ := os.Getwd()
-				u, reinforced, err := a.Bound(home, cwd).Remember(ctx, a, strings.Join(args, " "), category, scope, tags)
+				u, reinforced, err := a.Bound(home, cwd).RememberSafe(ctx, a, strings.Join(args, " "), category, scope, tags, safeReason)
 				if err != nil {
 					return err
 				}
@@ -253,6 +253,7 @@ func rememberCmd() *cobra.Command {
 	c.Flags().StringVar(&scope, "scope", "", "memory scope (default: bound instance)")
 	c.Flags().StringVar(&home, "jcode-home", "", "bind to this JCODE_HOME")
 	c.Flags().StringSliceVar(&tags, "tag", nil, "tag (repeatable)")
+	c.Flags().StringVar(&safeReason, "safe-reason", "", "why text that looks secret is safe to store (asked for when the secret check fires)")
 	c.Flags().BoolVar(&inProject, "project", false, "store in this repository's project scope (shareable with `muninn sync`)")
 	return c
 }

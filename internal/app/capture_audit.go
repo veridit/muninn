@@ -50,12 +50,8 @@ type AuditMessage struct {
 	Text       string `json:"text"`
 }
 
-func auditSafe(s string) string {
-	if project.LooksSecret(s) {
-		return "[withheld: secret]"
-	}
-	return s
-}
+// auditSafe masks credential-shaped tokens and keeps the rest readable.
+func auditSafe(s string) string { return project.MaskCredentials(s) }
 func (a *App) auditSchema() error {
 	_, err := a.DB.Exec(`CREATE TABLE IF NOT EXISTS capture_runs(id INTEGER PRIMARY KEY, at_ns INTEGER NOT NULL, session TEXT NOT NULL, record TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS capture_runs_time ON capture_runs(at_ns);

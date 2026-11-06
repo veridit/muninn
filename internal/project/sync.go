@@ -29,26 +29,45 @@ type Line struct {
 }
 
 // secretRe mirrors scripts/check-secrets.sh: a memory that looks like it
-// holds a credential is never written into a repository.
-var secretRe = regexp.MustCompile(`(sk-(proj-|ant-|or-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(API_KEY|SECRET|TOKEN|PASSWORD)[A-Z_]*=[^\s<$"'{]{8,})`)
+// holds a credential is never written into a repository. The sk- prefix must
+// start a token: "task-636-..." links in seid memories are not API keys.
+var secretRe = regexp.MustCompile(`((?:^|[^A-Za-z0-9])sk-(proj-|ant-|or-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(API_KEY|SECRET|TOKEN|PASSWORD)[A-Z_]*=[^\s<$"'{]{8,})`)
 
 // LooksSecret reports whether text matches a credential pattern or holds a
-// capability URL.
-func LooksSecret(text string) bool {
-	return secretRe.MatchString(text) || capabilityURLs(text) != text
+// capability URL. Used where text leaves the machine for a shared repository.
+func LooksSecret(text string) bool { return SecretHint(text) != "" }
+
+// SecretHint is the cheap check that prompts a judgment, it does not decide.
+// It names what looked secret ("" when nothing did). The writer, a person or
+// an agent, confirms the text is safe to store (browser keys that ship in
+// public bundles, references like secrets.NAME, and placeholders are safe).
+func SecretHint(text string) string {
+	if secretRe.MatchString(text) {
+		return "a credential-shaped token (API key, access token, password or private key)"
+	}
+	if capabilityURLs(text) != text {
+		return "a URL whose random path may be its access key"
+	}
+	return ""
+}
+
+// HasCredential reports a credential-shaped token.
+func HasCredential(text string) bool { return secretRe.MatchString(text) }
+
+// MaskCredentials replaces credential-shaped tokens with a marker. Capture uses
+// it only for text sent to the extraction provider, never for stored memories.
+func MaskCredentials(text string) string {
+	return secretRe.ReplaceAllStringFunc(text, func(m string) string {
+		// The sk- alternative may include one leading boundary character.
+		if i := strings.Index(m, "sk-"); i == 1 && !strings.HasPrefix(m, "sk-") {
+			return m[:1] + "[possible secret]"
+		}
+		return "[possible secret]"
+	})
 }
 
 // Capability URLs: an http(s) URL whose path holds a random-looking segment
-// is a bearer secret; anyone with the URL has access (2026-11-06: a private
-// Fastmail-hosted PWA path was recalled into an unrelated session).
-
-// Redact replaces credentials and capability URLs with a placeholder so text
-// can be shown without disclosing them. It reports whether anything changed.
-func Redact(text string) (string, bool) {
-	out := secretRe.ReplaceAllString(text, "[secret withheld]")
-	out = capabilityURLs(out)
-	return out, out != text
-}
+// may be a bearer secret; anyone with the URL has access.
 
 func capabilityURLs(text string) string {
 	return urlRe.ReplaceAllStringFunc(text, func(u string) string {
@@ -141,6 +160,8 @@ func syncFile(p Project, nativePath string, dry, mark bool) (SyncStats, error) {
 		if m.Scope != p.Scope() {
 			continue
 		}
+		// A shared repository is wider than the store, and its secret gate would
+		// refuse the line: text that looks secret stays local even when judged safe.
 		if LooksSecret(m.Title) || LooksSecret(m.Content) {
 			st.SkippedSecret++
 			continue

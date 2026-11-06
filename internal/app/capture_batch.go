@@ -56,7 +56,7 @@ func (c *captureBatch) apply(ctx context.Context, b Binding, a *App, scope strin
 	if _, err := b.WriteScope(scope); err != nil {
 		return err
 	}
-	if project.LooksSecret(action.Content) {
+	if project.LooksSecret(action.Content) && action.SafeReason == "" {
 		return fmt.Errorf("secret candidate refused")
 	}
 	now := time.Now().UTC()
@@ -185,7 +185,7 @@ func (c *captureBatch) apply(ctx context.Context, b Binding, a *App, scope strin
 		return nil
 	}
 	c.byID[id] = len(c.mems)
-	c.mems = append(c.mems, ingest.NativeMemory{ID: id, Origin: action.Origin, Content: action.Content, Category: action.Category, Trust: action.Trust, Scope: scope, Active: true, Strength: 1, Created: now, Updated: now, CaptureEvents: []string{receipt}, CaptureSupersedes: retireTarget})
+	c.mems = append(c.mems, ingest.NativeMemory{ID: id, Origin: action.Origin, Content: action.Content, Category: action.Category, Trust: action.Trust, Scope: scope, Active: true, Strength: 1, Created: now, Updated: now, CaptureEvents: []string{receipt}, CaptureSupersedes: retireTarget, SafeReason: action.SafeReason})
 	c.receipts[receipt] = true
 	c.dirty = true
 	return nil

@@ -129,8 +129,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/remember", func(w http.ResponseWriter, r *http.Request) {
 		b := b.Refresh(s.App)
 		var in struct {
-			Content, Category, Scope string
-			Tags                     []string
+			Content, Category, Scope, SafeReason string
+			Tags                                 []string
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			fail(w, 400, err)
@@ -138,7 +138,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.Mu.Lock()
 		defer s.Mu.Unlock()
-		u, re, err := b.Remember(r.Context(), s.App, in.Content, in.Category, in.Scope, in.Tags)
+		u, re, err := b.RememberSafe(r.Context(), s.App, in.Content, in.Category, in.Scope, in.Tags, in.SafeReason)
 		if err != nil {
 			fail(w, 400, err)
 			return

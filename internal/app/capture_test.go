@@ -295,3 +295,32 @@ func TestCaptureNearDuplicateCosine(t *testing.T) {
 	}
 	t.Log("CAPTURE cosine: 0.99 reinforces at threshold 0.98; 0.00 adds")
 }
+
+// Capture has no one to ask: the model judges. A random-path URL it marks safe
+// with a reason is stored as is, with the reason; an unjudged one is rejected.
+func TestCaptureModelJudgesLookalikeSecrets(t *testing.T) {
+	f := scopetest.New(t)
+	b := f.Bind(t, "alpha")
+	url := "https://example.org/tour-" + strings.Repeat("Xq7Tm2Lk9V", 3) + "/"
+	judged := extract.Candidate{Category: "fact", Trust: "medium", Content: "Quartz tour is shared with the family at " + url, SafeReason: "shared on purpose with family, holds no account access"}
+	jb, _ := json.Marshal(judged)
+	fakeCapture(t, f, string(jb)+"\n"+line("fact", "medium", "Quartz admin panel at "+url, ""))
+	o := captureOpts("judge")
+	r, err := b.Capture(context.Background(), f.App, o)
+	if err != nil || r.Rejected != 1 {
+		t.Fatalf("%+v %v", r, err)
+	}
+	mems, _ := ingest.LoadNative(app.NativePath())
+	var stored, unjudged bool
+	for _, m := range mems {
+		if m.Content == judged.Content && m.SafeReason == judged.SafeReason {
+			stored = true
+		}
+		if strings.HasPrefix(m.Content, "Quartz admin panel") {
+			unjudged = true
+		}
+	}
+	if !stored || unjudged {
+		t.Fatalf("judged stored=%v unjudged stored=%v", stored, unjudged)
+	}
+}

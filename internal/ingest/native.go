@@ -38,6 +38,9 @@ type NativeMemory struct {
 	// upstream text at the last import. Both are empty for native memories.
 	Origin     string `json:"origin,omitempty"`
 	OriginHash string `json:"origin_hash,omitempty"`
+	// SafeReason records why the writer judged text that looked secret to be
+	// safe to store (2026-11-06: judge on write, never hide on display).
+	SafeReason string `json:"safe_reason,omitempty"`
 }
 
 type nativeFile struct {
@@ -185,6 +188,12 @@ func newID() string {
 // Remember adds a memory. Exact-duplicate content in the same category and
 // scope reinforces the existing memory instead of creating a copy.
 func Remember(path, content, category, scope string, tags []string) (NativeMemory, bool, error) {
+	return RememberSafe(path, content, category, scope, tags, "")
+}
+
+// RememberSafe is Remember with the writer's reason for storing text that
+// looked secret. The reason is kept on the memory for later review.
+func RememberSafe(path, content, category, scope string, tags []string, safeReason string) (NativeMemory, bool, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return NativeMemory{}, false, errors.New("empty memory")
@@ -200,13 +209,16 @@ func Remember(path, content, category, scope string, tags []string) (NativeMemor
 	for i := range mems {
 		m := &mems[i]
 		if m.Active && m.Content == content && m.Category == category && m.Scope == scope {
+			if safeReason != "" {
+				m.SafeReason = safeReason
+			}
 			m.Strength++
 			m.Updated = now
 			return *m, true, SaveNative(path, mems)
 		}
 	}
 	m := NativeMemory{ID: newID(), Content: content, Category: category, Tags: tags, Scope: scope,
-		Active: true, Strength: 1, Created: now, Updated: now}
+		Active: true, Strength: 1, Created: now, Updated: now, SafeReason: strings.TrimSpace(safeReason)}
 	mems = append(mems, m)
 	assignNativeSIDs(mems)
 	m = mems[len(mems)-1]

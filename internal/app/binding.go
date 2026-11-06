@@ -421,7 +421,29 @@ func (b Binding) SQL(scopeCol, sourceCol string) (string, []any) {
 	return where, args
 }
 func (b Binding) Remember(ctx context.Context, a *App, content, category, scope string, tags []string) (store.Unit, bool, error) {
+	return b.RememberSafe(ctx, a, content, category, scope, tags, "")
+}
+
+// SecretCheckError asks the writer to judge text that looked secret. It is a
+// question, not a verdict: storing again with a safe reason proceeds.
+type SecretCheckError struct{ Hint string }
+
+func (e *SecretCheckError) Error() string {
+	return "not stored yet: this looks like it may contain " + e.Hint + ". Are you sure there are no secrets here? " +
+		"If it is safe (for example a browser key that ships in public pages, a secrets.NAME reference, a placeholder, or a URL meant to be shared), " +
+		"store it again with a safe reason saying why. Otherwise remove the secret and store the rest."
+}
+
+// RememberSafe stores a memory. When the cheap secret check fires, the write
+// needs safeReason: the writer's judgment that the text is safe to keep.
+func (b Binding) RememberSafe(ctx context.Context, a *App, content, category, scope string, tags []string, safeReason string) (store.Unit, bool, error) {
 	b = b.Refresh(a)
+	safeReason = strings.TrimSpace(safeReason)
+	if hint := project.SecretHint(content); hint != "" && safeReason == "" {
+		return store.Unit{}, false, &SecretCheckError{Hint: hint}
+	} else if hint == "" {
+		safeReason = ""
+	}
 	scope, err := b.WriteScope(scope)
 	if err != nil {
 		return store.Unit{}, false, err
@@ -429,7 +451,7 @@ func (b Binding) Remember(ctx context.Context, a *App, content, category, scope 
 	if category == "" {
 		category = "fact"
 	}
-	m, reinforced, err := ingest.Remember(NativePath(), content, category, scope, tags)
+	m, reinforced, err := ingest.RememberSafe(NativePath(), content, category, scope, tags, safeReason)
 	if err != nil {
 		return store.Unit{}, false, err
 	}

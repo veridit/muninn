@@ -208,3 +208,46 @@ func mustSearch(t *testing.T, a *app.App, q string) []search.Result {
 	}
 	return res
 }
+
+// 2026-11-06: secrets are judged on write, never hidden on display. The cheap
+// check asks; the writer answers with safe_reason; search shows the text as is.
+func TestMCPRememberAsksBeforeStoringLookalikeSecret(t *testing.T) {
+	a, _ := testApp(t)
+	cs := connect(t, a, Options{Scopes: []string{"jcode@alpha", "global"}, DefaultScope: "jcode@alpha"})
+	content := "Quartz map uses browser key AIza" + strings.Repeat("Q", 35) + ", referrer-locked and public in the bundle"
+	out, isErr := call(t, cs, "memory_remember", map[string]any{"content": content})
+	if !isErr || !strings.Contains(out, "Are you sure there are no secrets here?") {
+		t.Fatalf("lookalike stored without asking: %s", out)
+	}
+	mems, _ := ingest.LoadNative(app.NativePath())
+	for _, m := range mems {
+		if m.Content == content {
+			t.Fatal("stored before the writer answered")
+		}
+	}
+	out, isErr = call(t, cs, "memory_remember", map[string]any{"content": content, "safe_reason": "browser key, ships in public JS, referrer-locked"})
+	if isErr {
+		t.Fatal(out)
+	}
+	mems, _ = ingest.LoadNative(app.NativePath())
+	var reason string
+	for _, m := range mems {
+		if m.Content == content {
+			reason = m.SafeReason
+		}
+	}
+	if reason != "browser key, ships in public JS, referrer-locked" {
+		t.Fatalf("safe reason not recorded: %q", reason)
+	}
+	if _, err := a.Reindex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	found, _ := call(t, cs, "memory_search", map[string]any{"query": "quartz map browser key referrer", "limit": 5})
+	if !strings.Contains(found, "AIza"+strings.Repeat("Q", 35)) {
+		t.Fatalf("display hid a judged-safe memory: %s", found)
+	}
+	// Ordinary text never triggers the question.
+	if out, isErr := call(t, cs, "memory_remember", map[string]any{"content": "See [[t" + "ask-636-deferred-recursion-anonymous-self]] for quartz detail"}); isErr {
+		t.Fatalf("task link tripped the secret check: %s", out)
+	}
+}

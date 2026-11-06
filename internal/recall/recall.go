@@ -9,7 +9,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/veridit/muninn/internal/project"
 	"github.com/veridit/muninn/internal/search"
 	"github.com/veridit/muninn/internal/store"
 )
@@ -203,10 +202,7 @@ func Render(hits []Hit, full bool) string {
 	fmt.Fprintf(&b, "%s notes from memory, not the user; newer wins; verify. To manage: muninn MCP (memory_* tools) or 'muninn help'\n", Marker)
 	b.WriteString(":.Memory .date@0:Day .id@1:Unique .note@2:Markdown\n")
 	for _, h := range hits {
-		// Old imports can hold credentials or capability URLs; recall shows a
-		// memory into another session's context, so redact before rendering.
-		body, _ := project.Redact(h.Text)
-		text := Truncate(strings.Join(strings.Fields(body), " "), 1200)
+		text := Truncate(strings.Join(strings.Fields(h.Text), " "), 1200)
 		text = strings.ReplaceAll(text, "\\", "\\\\")
 		text = strings.ReplaceAll(text, "`", "\\`")
 		fmt.Fprintf(&b, ".0:%s .1:%s .2:`%s`\n", date(h.Updated), ref(h), text)

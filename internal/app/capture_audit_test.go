@@ -49,7 +49,7 @@ func TestCaptureAuditPrivateDryRunAndRetention(t *testing.T) {
 		t.Fatalf("runs=%+v err=%v", runs, err)
 	}
 	r := runs[0]
-	if !r.DryRun || r.Trigger != "session_end" || r.Home != o.Home || r.Scope == "" || r.Model == "" || len(r.Messages) != 2 || r.Messages[1].Text != "" || r.Messages[1].Hash == "" || len(r.Calls) != 1 || len(r.Calls[0].Request) == 0 || len(r.Calls[0].Rejections) != 2 || r.Calls[0].Rejections[0].Reason != "secret withheld" || len(r.Report.Actions) != 1 || r.Report.Actions[0].Reason == "" || report.Usage.TotalTokens != 15 {
+	if !r.DryRun || r.Trigger != "session_end" || r.Home != o.Home || r.Scope == "" || r.Model == "" || len(r.Messages) != 2 || r.Messages[1].Text != "[possible secret]" || r.Messages[1].Hash == "" || len(r.Calls) != 1 || len(r.Calls[0].Request) == 0 || len(r.Calls[0].Rejections) != 2 || r.Calls[0].Rejections[0].Reason != "looks secret, no safe_reason" || len(r.Report.Actions) != 1 || r.Report.Actions[0].Reason == "" || report.Usage.TotalTokens != 15 {
 		t.Fatalf("incomplete audit: %+v", r)
 	}
 	data, _ := json.Marshal(r)

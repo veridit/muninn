@@ -38,6 +38,8 @@ type rememberIn struct {
 	Category string   `json:"category,omitempty" jsonschema:"fact | preference | correction | entity"`
 	Scope    string   `json:"scope,omitempty" jsonschema:"binding scope (default: this instance)"`
 	Tags     []string `json:"tags,omitempty"`
+	// SafeReason answers the secret check: why text that looks secret is safe.
+	SafeReason string `json:"safe_reason,omitempty" jsonschema:"only after a 'looks like it may contain a secret' reply: why this text is safe to store"`
 }
 
 type idOut struct {
@@ -109,9 +111,9 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 			return text(out), out, nil
 		})
 
-	mcp.AddTool(s, &mcp.Tool{Name: "memory_remember", Description: "Store a durable memory: a rule, preference, decision or correction the user stated that will matter in future sessions. One fact per call. Never store secrets."},
+	mcp.AddTool(s, &mcp.Tool{Name: "memory_remember", Description: "Store a durable memory: a rule, preference, decision or correction the user stated that will matter in future sessions. One fact per call. Never store real secrets. If the reply says the text looks like it may hold a secret, judge it: remove the secret, or call again with safe_reason when it is safe."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in rememberIn) (*mcp.CallToolResult, idOut, error) {
-			u, re, err := opt.Remember(ctx, a, in.Content, in.Category, in.Scope, in.Tags)
+			u, re, err := opt.RememberSafe(ctx, a, in.Content, in.Category, in.Scope, in.Tags, in.SafeReason)
 			if err != nil {
 				return nil, idOut{}, err
 			}

@@ -175,6 +175,9 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 	turns := 0
 	for _, m := range o.Messages {
 		if !seen[m.ID] {
+			// Credential-shaped tokens never leave for the extraction provider; the
+			// rest of the message does, so its facts are not lost with the token.
+			m.Text = project.MaskCredentials(m.Text)
 			pending = append(pending, m)
 			if m.Role == "user" && m.Text != "" {
 				turns++
@@ -262,9 +265,6 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 		for end < len(pending) {
 			m := pending[end]
 			t := m.Text
-			if project.LooksSecret(t) {
-				t = ""
-			}
 			line := m.Role + ": " + t + "\n"
 			if t != "" && chunk.Len()+len(line) > chunkLimit && end > start {
 				break
@@ -305,7 +305,7 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 			var known []extract.Known
 			knownBytes := 0
 			for _, r := range hits {
-				if !project.LooksSecret(r.Unit.Body) {
+				if !project.HasCredential(r.Unit.Body) {
 					if hook && knownBytes+len(r.Unit.Body) > 4096 {
 						continue
 					}

@@ -24,7 +24,7 @@ fi
 # Shapes: OpenAI/Anthropic/OpenRouter style keys, GitHub tokens, AWS keys,
 # Slack tokens, Google API keys, private key blocks, and KEY=value assignments
 # with a non-placeholder value.
-pattern='(sk-(proj-|ant-|or-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(API_KEY|SECRET|TOKEN|PASSWORD)[A-Z_]*=[^[:space:]<$"'"'"'{]{8,})'
+pattern='((^|[^A-Za-z0-9])sk-(proj-|ant-|or-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(API_KEY|SECRET|TOKEN|PASSWORD)[A-Z_]*=[^[:space:]<$"'"'"'{]{8,})'
 
 hits=0
 while IFS= read -r f; do

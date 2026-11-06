@@ -16,9 +16,10 @@ func captureFragments(messages []harness.CaptureMessage, seen map[string]bool, l
 	originals, last := map[string]string{}, map[string]string{}
 	for _, m := range messages {
 		size := max(4, limit-len(m.Role)-2)
-		// Withhold whole secret-bearing messages before splitting, never split a
-		// credential pattern across fragments and accidentally bypass the detector.
-		if project.LooksSecret(m.Text) || len(m.Text) <= size {
+		// Mask credentials before splitting, so no fragment boundary can cut a
+		// token in half and slip it past the detector.
+		m.Text = project.MaskCredentials(m.Text)
+		if len(m.Text) <= size {
 			out = append(out, m)
 			continue
 		}
