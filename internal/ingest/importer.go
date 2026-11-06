@@ -25,6 +25,11 @@ type Imported struct {
 	Created   time.Time
 	Updated   time.Time
 	keepScope bool // new default only; existing Engram identities keep their scope
+	// Placed: the scope came from the directory the memory was written in.
+	// That physical provenance, not the importing binding, decides where it
+	// lives, and an existing copy an earlier explicit --map put in a jcode
+	// instance keeps that place.
+	Placed bool
 }
 
 // ImportStats counts what one import did.
@@ -77,7 +82,7 @@ func MergeImport(path string, items []Imported, dry bool) (ImportStats, error) {
 			it.Scope = "global"
 		}
 		i, ok := byOrigin[it.Origin]
-		if ok && it.keepScope {
+		if ok && (it.keepScope || it.Placed && strings.HasPrefix(mems[i].Scope, "jcode@")) {
 			it.Scope = mems[i].Scope
 		}
 		h := originHash(it.Title, it.Content, it.Scope, it.Active)
@@ -191,13 +196,22 @@ type EngramObservation struct {
 	CreatedAt string  `json:"created_at"`
 	UpdatedAt string  `json:"updated_at"`
 	DeletedAt *string `json:"deleted_at"`
+	SessionID string  `json:"session_id"`
+	// Directory is the working directory of the engram session that wrote
+	// the observation (sessions.directory). It places the memory.
+	Directory string `json:"-"`
 }
 
 // EngramOptions maps engram projects to muninn scopes.
 type EngramOptions struct {
 	// ProjectScopes overrides the scope for an engram project, e.g.
-	// {"statbus": "jcode@statbus"}. Unlisted projects get "engram:<project>".
+	// {"statbus": "jcode@statbus"}. It wins over directory resolution.
 	ProjectScopes map[string]string
+	// ScopeForDir resolves an observation's session directory to the scope
+	// muninn itself would use there ("project:<id>"), as if the memory had
+	// been written in that project. Unresolved observations get
+	// "engram:<project>".
+	ScopeForDir func(dir string) (string, bool)
 }
 
 // EngramItems converts observations. New personal or empty-project observations
@@ -214,10 +228,15 @@ func EngramItems(obs []EngramObservation, o EngramOptions) []Imported {
 			project = strings.TrimSpace(*ob.Project)
 		}
 		scope := "personal"
+		resolved := false
 		if ob.Scope != "personal" && project != "" {
 			scope = "engram:" + project
 			if s, ok := o.ProjectScopes[project]; ok {
 				scope = s
+			} else if o.ScopeForDir != nil && ob.Directory != "" {
+				if s, ok := o.ScopeForDir(ob.Directory); ok {
+					scope, resolved = s, true
+				}
 			}
 		}
 		var tags []string
@@ -225,7 +244,7 @@ func EngramItems(obs []EngramObservation, o EngramOptions) []Imported {
 			tags = []string{*ob.TopicKey}
 		}
 		out = append(out, Imported{Origin: "engram:" + key, Title: ob.Title, Content: ob.Content,
-			keepScope: ob.Scope == "personal" || project == "",
+			keepScope: ob.Scope == "personal" || project == "", Placed: resolved,
 			Category:  ob.Type, Tags: tags, Scope: scope, Active: ob.DeletedAt == nil || *ob.DeletedAt == "",
 			Created: engramTime(ob.CreatedAt), Updated: engramTime(ob.UpdatedAt)})
 	}
@@ -248,10 +267,21 @@ func ReadEngramExport(path string) ([]EngramObservation, error) {
 		return nil, err
 	}
 	var f struct {
+		Sessions []struct {
+			ID        string `json:"id"`
+			Directory string `json:"directory"`
+		} `json:"sessions"`
 		Observations []EngramObservation `json:"observations"`
 	}
 	if err := json.Unmarshal(b, &f); err != nil {
 		return nil, err
+	}
+	dirs := map[string]string{}
+	for _, s := range f.Sessions {
+		dirs[s.ID] = s.Directory
+	}
+	for i := range f.Observations {
+		f.Observations[i].Directory = dirs[f.Observations[i].SessionID]
 	}
 	return f.Observations, nil
 }
@@ -266,8 +296,9 @@ func ReadEngramDB(path string) ([]EngramObservation, error) {
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT id, COALESCE(sync_id,''), type, title, content, project, scope, topic_key,
-	  created_at, updated_at, deleted_at FROM observations ORDER BY id`)
+	rows, err := db.Query(`SELECT o.id, COALESCE(o.sync_id,''), o.type, o.title, o.content, o.project, o.scope, o.topic_key,
+	  o.created_at, o.updated_at, o.deleted_at, o.session_id, COALESCE(s.directory,'')
+	  FROM observations o LEFT JOIN sessions s ON s.id = o.session_id ORDER BY o.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +307,7 @@ func ReadEngramDB(path string) ([]EngramObservation, error) {
 	for rows.Next() {
 		var o EngramObservation
 		if err := rows.Scan(&o.ID, &o.SyncID, &o.Type, &o.Title, &o.Content, &o.Project, &o.Scope, &o.TopicKey,
-			&o.CreatedAt, &o.UpdatedAt, &o.DeletedAt); err != nil {
+			&o.CreatedAt, &o.UpdatedAt, &o.DeletedAt, &o.SessionID, &o.Directory); err != nil {
 			return nil, err
 		}
 		out = append(out, o)

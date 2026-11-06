@@ -92,8 +92,11 @@ func importCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("%s: %w", src, err)
 			}
-			items := ingest.EngramItems(obs, ingest.EngramOptions{ProjectScopes: pm})
 			return withApp(func(ctx context.Context, a *app.App) error {
+				// Place each observation where it was written, as if muninn had
+				// written it there: instance root -> jcode@<name>, git project ->
+				// project:<id>. --map still wins; unplaced ones stay engram:<p>.
+				items := ingest.EngramItems(obs, ingest.EngramOptions{ProjectScopes: pm, ScopeForDir: a.ImportScopeForDir})
 				cwd, _ := os.Getwd()
 				st, err := a.Bound("", cwd).MergeImport(app.NativePath(), items, dry)
 				if err != nil {

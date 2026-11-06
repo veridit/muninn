@@ -68,7 +68,7 @@ func New(t *testing.T) *Fixture {
 	for _, row := range []struct{ name, scope string }{
 		{"Alpha", "jcode@alpha"}, {"AlphaProject", "jcode@alpha:project"},
 		{"Beta", "jcode@beta"}, {"BetaProject", "jcode@beta:project"},
-		{"Shared", "global"}, {"Personal", "personal"}, {"JcodeGlobal", "jcode@global"}, {"Engram", "engram:frogs"}, {"Named", "sql_saga"}, {"Project", "project:matrix-project"}, {"Client", "client:acme"}, {"ClientProject", "client:acme:client-project"}, {"OtherClient", "client:other"},
+		{"Shared", "global"}, {"Personal", "personal"}, {"JcodeGlobal", "jcode@global"}, {"Engram", "engram:frogs"}, {"Named", "sql_saga"}, {"Project", "project:matrix-project"}, {"OtherProject", "project:other-project"}, {"Client", "client:acme"}, {"ClientProject", "client:acme:client-project"}, {"OtherClient", "client:other"},
 	} {
 		mems = append(mems, ingest.NativeMemory{ID: "mem_matrix_" + row.name, Content: "Matrix(" + row.name + ") quartz deployment policy marker", Category: "fact", Scope: row.scope, Active: true, Created: time.Now(), Updated: time.Now()})
 	}
@@ -174,7 +174,7 @@ func (f *Fixture) Bind(t *testing.T, name string) app.Binding {
 // Clean checks real bodies, aliases and sids, not merely the scope label.
 func (f *Fixture) Clean(t *testing.T, binding, out string) {
 	t.Helper()
-	hidden := []string{"Beta", "BetaProject", "OtherClient"}
+	hidden := []string{"Beta", "BetaProject", "OtherClient", "OtherProject"}
 	hidden = append(hidden, "OtherClientNote")
 	if binding == "client" {
 		hidden = append(hidden, "OutsideNote")

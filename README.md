@@ -367,8 +367,14 @@ client root can be imported into that same client. File formats are unchanged.
 
 New engram `personal` or empty-project observations become `personal`;
 existing rows keep their scopes, with no automatic rescope. `global` is for
-working rules deliberately shared with non-client bindings. Project observations become
-`engram:<project>` unless mapped. Identical text indexed from two places
+working rules deliberately shared with non-client bindings. Project
+observations are placed where they were written, as if muninn had written
+them there: a session directory inside a jcode instance root becomes
+`jcode@<instance>`, one inside a git project becomes that project's
+`project:<id>`. Only observations from the home folder or a folder that no
+longer exists stay `engram:<project>`. `--map` still wins, and a copy an
+earlier `--map` put in an instance keeps its place. The global binding sees
+a `project:` scope only from inside that project. Identical text indexed from two places
 (a live jcode memory and its imported copy) is shown once.
 
 ```sh

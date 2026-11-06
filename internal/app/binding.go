@@ -133,6 +133,28 @@ func (a *App) bound(jcodeHome, cwd string) Binding {
 		for s := range names {
 			b.Scopes = append(b.Scopes, "!"+s, "!"+s+":*")
 		}
+		// Project memories belong to their project: global sees only the
+		// project of its working directory, like an instance binding does.
+		current := ""
+		if cwd != "" {
+			if p, err := project.Find(cwd, false); err == nil {
+				current = p.Scope()
+			}
+		}
+		if prow, err := a.DB.Query(`SELECT DISTINCT scope FROM units WHERE scope LIKE 'project:%'`); err != nil {
+			b.Scopes, b.Err = []string{"!*"}, err
+		} else {
+			for prow.Next() {
+				var s string
+				if prow.Scan(&s) == nil && s != current {
+					b.Scopes = append(b.Scopes, "!"+s)
+				}
+			}
+			if err := prow.Err(); err != nil {
+				b.Err = err
+			}
+			prow.Close()
+		}
 		sort.Strings(b.Scopes)
 	}
 	b.Scopes = append(b.Scopes, "!client:*")

@@ -109,6 +109,14 @@ func (b Binding) MergeImport(path string, items []ingest.Imported, dry bool, sou
 		if scope == "" {
 			scope = "global"
 		}
+		// A placed item's scope is where it was physically written (never a
+		// client, see ImportScopeForDir), so the importing binding's write
+		// policy does not apply. Client boundaries still hold in MergeImport.
+		if it.Placed && !strings.HasPrefix(scope, "client:") {
+			if old, ok := existing[it.Origin]; !ok || !strings.HasPrefix(old, "client:") {
+				continue
+			}
+		}
 		if _, err := b.WriteScope(scope); err != nil {
 			return ingest.ImportStats{}, err
 		}
