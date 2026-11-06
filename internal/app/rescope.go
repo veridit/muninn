@@ -14,6 +14,11 @@ import (
 // Rescope is deliberately CLI-admin-only. No hook, MCP, TUI or HTTP route calls it.
 // Cross-client migration preserves the stable identity and upstream mapping.
 func (b Binding) Rescope(ctx context.Context, a *App, ref, target string, crossClient bool) (string, error) {
+	return b.rescope(ctx, a, ref, target, crossClient, true)
+}
+
+// rescope lets the owner-only tidy batch defer indexing until all moves finish.
+func (b Binding) rescope(ctx context.Context, a *App, ref, target string, crossClient, reindex bool) (string, error) {
 	b = b.Refresh(a)
 	if b.Err != nil {
 		return "", b.Err
@@ -69,8 +74,10 @@ func (b Binding) Rescope(ctx context.Context, a *App, ref, target string, crossC
 	if err := ingest.SaveNative(path, mems); err != nil {
 		return "", err
 	}
-	if _, err := a.Reindex(ctx); err != nil {
-		return "", err
+	if reindex {
+		if _, err := a.Reindex(ctx); err != nil {
+			return "", err
+		}
 	}
 	return u.SID, nil
 }

@@ -27,6 +27,41 @@ One static binary for macOS, Linux and Windows (arm64 and amd64).
 > Muninn is Odin's raven of memory: it flies out every morning and brings back
 > what matters.
 
+## Deliberate cleanup with `muninn tidy`
+
+`tidy` is an owner CLI tool, never a hook, MCP tool, TUI action or web route.
+It reads the whole existing neighbor graph, combining cross-scope votes with
+corpus-derived ticket prefixes, hostnames and distinctive terms, plus repository
+and client folder names discovered on disk. It does not rewrite dated notes or
+revalidate their historical truth.
+
+```sh
+muninn tidy scan                         # read-only scan, private JSON + Markdown
+muninn tidy scan --judge --max-judge 40  # optional configured extract model
+# Review the printed plan path. Unjudged entries are unsure, not move decisions.
+muninn tidy apply /path/to/plan.json --dry-run
+muninn tidy apply /path/to/plan.json --only 'global->client:example'
+```
+
+Defaults are `--min-sim 0.70 --majority 10 --own-max 3`. Votes plus matching
+anchors are strong suspects, one signal is weak, and evenly mixed client
+neighbors are listed separately as maybe general. Only explicit `move` decisions
+apply. The optional judge receives redacted memory text, five nearest neighbors
+and matched anchors in batches of five, strong first. Its default limit is 100;
+invalid answers become `unsure`. Scan writes only the plan and summary, normally
+under the data directory's `tidy/`, and never refreshes the index.
+
+Before applying, stop other manual memory writers. Apply blocks capture with its
+lease, rejects stale reviewed entries, backs up `memories.json`, saves recovery
+files and a receipt, and reindexes once after the batch. Native memories use the
+same rescope path as `muninn rescope`. Upstream memories become exact native
+copies with `tidy:<upstream-origin>` identities, while the original identities
+are suppressed without changing upstream files. Each printed undo command uses
+`muninn rescope <id> --to <original-scope> --cross-client`. For upstream moves,
+this moves the native copy back and intentionally keeps the upstream suppressed
+to prevent duplicates. Recovery backups retain the original native file bytes;
+ordinary errors roll back files and newly added suppressions.
+
 ## How it works
 
 ```mermaid

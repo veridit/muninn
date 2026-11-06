@@ -61,7 +61,7 @@ func main() {
 	}
 	root.AddCommand(versionCmd(), indexCmd(), searchCmd(), recallCmd(), rememberCmd(), forgetCmd(), showCmd(), rescopeCmd(),
 		listCmd(), relatedCmd(), statsCmd(), gcCmd(), hookCmd(), serveCmd(), mcpCmd(), tuiCmd(),
-		installCmd(), uninstallCmd(), configCmd(), jcodeCmd(), importCmd(), projectCmd(), syncCmd(), modelCmd(), captureCmd())
+		installCmd(), uninstallCmd(), configCmd(), jcodeCmd(), importCmd(), projectCmd(), syncCmd(), modelCmd(), captureCmd(), tidyCmd())
 	if p := os.Getenv("MUNINN_CPUPROFILE"); p != "" {
 		if f, err := os.Create(p); err == nil {
 			pprof.StartCPUProfile(f)
@@ -78,7 +78,7 @@ func main() {
 // backgroundCommands run at lowered priority with bounded parallelism.
 var backgroundCommands = map[string]bool{
 	"capture": true, "index": true, "serve": true, "mcp": true,
-	"gc": true, "import": true, "sync": true,
+	"gc": true, "import": true, "sync": true, "tidy": true,
 }
 
 func topLevel(c *cobra.Command) string {

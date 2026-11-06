@@ -15,6 +15,9 @@ import (
 
 // Imported is one memory read from another memory system, before merging.
 type Imported struct {
+	// ExactText is reserved for deliberate owner moves, preserving even leading
+	// and trailing whitespace. Ordinary imports retain their trimming behavior.
+	ExactText bool
 	Origin    string // stable upstream identity; the idempotency key
 	Title     string
 	Content   string
@@ -73,7 +76,9 @@ func MergeImport(path string, items []Imported, dry bool) (ImportStats, error) {
 	}
 	now := time.Now().UTC()
 	for _, it := range items {
-		it.Content = strings.TrimSpace(it.Content)
+		if !it.ExactText {
+			it.Content = strings.TrimSpace(it.Content)
+		}
 		if it.Origin == "" || it.Content == "" {
 			st.Skipped++
 			continue
@@ -245,7 +250,7 @@ func EngramItems(obs []EngramObservation, o EngramOptions) []Imported {
 		}
 		out = append(out, Imported{Origin: "engram:" + key, Title: ob.Title, Content: ob.Content,
 			keepScope: ob.Scope == "personal" || project == "", Placed: resolved,
-			Category:  ob.Type, Tags: tags, Scope: scope, Active: ob.DeletedAt == nil || *ob.DeletedAt == "",
+			Category: ob.Type, Tags: tags, Scope: scope, Active: ob.DeletedAt == nil || *ob.DeletedAt == "",
 			Created: engramTime(ob.CreatedAt), Updated: engramTime(ob.UpdatedAt)})
 	}
 	return out

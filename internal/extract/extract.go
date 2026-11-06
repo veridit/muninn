@@ -194,6 +194,24 @@ func key(c Config) (string, error) {
 // Run makes a bounded non-streaming request. Ollama uses its OpenAI-compatible
 // /v1 endpoint, with no API key. Redirects are forbidden to avoid key leakage.
 func Run(ctx context.Context, c Config, transcript string, known []Known) (Result, error) {
+	if len(transcript) > 256<<10 {
+		return Result{}, errors.New("extraction chunk exceeds 256 KiB")
+	}
+	input, _ := json.Marshal(struct {
+		Known      []Known `json:"known"`
+		Transcript string  `json:"transcript"`
+	}{known, transcript})
+	out, err := Complete(ctx, c, prompt, string(input))
+	if err == nil {
+		out.Candidates, out.Rejections = parseDetailed(out.Raw)
+		out.Rejected = len(out.Rejections)
+	}
+	return out, err
+}
+
+// Complete shares capture's bounded HTTP transport, credential handling and
+// content-free errors with owner CLI curation. Callers validate their own schema.
+func Complete(ctx context.Context, c Config, system, input string) (Result, error) {
 	var out Result
 	if c.Provider == "off" {
 		return out, nil
@@ -209,20 +227,16 @@ func Run(ctx context.Context, c Config, transcript string, known []Known) (Resul
 	if u.Scheme != "https" && !(u.Scheme == "http" && local) {
 		return out, errors.New("extraction requires HTTPS (except loopback)")
 	}
-	if len(transcript) > 256<<10 {
-		return out, errors.New("extraction chunk exceeds 256 KiB")
+	if len(input) > 512<<10 {
+		return out, errors.New("extraction input exceeds 512 KiB")
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.CallTimeout())
 	defer cancel()
-	input, _ := json.Marshal(struct {
-		Known      []Known `json:"known"`
-		Transcript string  `json:"transcript"`
-	}{known, transcript})
 	maxTokens := c.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = 4096
 	}
-	payload := map[string]any{"model": c.Model, "messages": []map[string]string{{"role": "system", "content": prompt}, {"role": "user", "content": string(input)}}, "max_tokens": maxTokens, "stream": false, "temperature": 0}
+	payload := map[string]any{"model": c.Model, "messages": []map[string]string{{"role": "system", "content": system}, {"role": "user", "content": string(input)}}, "max_tokens": maxTokens, "stream": false, "temperature": 0}
 	if u.Hostname() == "api.deepseek.com" {
 		payload["thinking"] = map[string]string{"type": "disabled"}
 	}
@@ -276,8 +290,6 @@ func Run(ctx context.Context, c Config, transcript string, known []Known) (Resul
 	if reply.Choices[0].FinishReason == "length" {
 		return out, errors.New("extraction response truncated")
 	}
-	out.Candidates, out.Rejections = parseDetailed(out.Raw)
-	out.Rejected = len(out.Rejections)
 	out.LatencyMS = time.Since(start).Milliseconds()
 	return out, nil
 }
