@@ -56,6 +56,8 @@ for inst in ("alpha", "beta"):
     home = root / inst / ".jcode"
     session(home, "capture-one", root / inst, inst.title())
     hook(home, "capture-one")
+    # Capture checkpoints the native file, the next recall/index refreshes views.
+    command(["index"], home)
     runs = json.loads(command(["capture", "log", "--session", "capture-one", "--json"], home).stdout)
     run = next(r for r in runs if r["home"] == str(home))
     assert run["scope"].startswith("jcode@"), run
@@ -73,6 +75,7 @@ client = root / "client"
 home = root / "alpha/.jcode"
 session(home, "capture-client", client, "Client")
 hook(home, "capture-client")
+command(["index"], home)
 runs = json.loads(command(["capture", "log", "--session", "capture-client", "--json"]).stdout)
 assert runs[0]["scope"] == "client:synthetic-client", runs
 request = json.loads(runs[0]["calls"][0]["request"]["messages"][1]["content"])

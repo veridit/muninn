@@ -133,9 +133,8 @@ func captureCmd() *cobra.Command {
 			if binding.Err != nil {
 				return binding.Err
 			}
-			if _, err := a.Reindex(ctx); err != nil {
-				return err
-			}
+			// Capture reads the current index plus a fresh native snapshot. Full
+			// graph/embedding work is deferred to recall/index, outside this hook.
 			audited = true
 			trigger := ""
 			if hook {

@@ -44,7 +44,9 @@ func TestNeighborsRepeatedDirtyOffersAreIdempotent(t *testing.T) {
 	// A repeated source identity, or a replayed frontier, must not produce two
 	// offers of the same neighbor in a single batched write.
 	m := ingest.NativeMemory{ID: "new", Content: "synthetic quartz new policy", Active: true, Scope: "global", Created: now, Updated: now}
-	mems = append(mems, m, m)
+	mirror := m
+	mirror.ID = "new-mirror"
+	mems = append(mems, m, mirror)
 	run()
 	checkNeighbors(t, db, 1)
 	var id int64

@@ -25,6 +25,7 @@ func OpenAudit() (*App, error) {
 }
 
 type AuditRun struct {
+	CaptureTimings
 	ID         int64            `json:"id"`
 	Time       time.Time        `json:"time"`
 	Harness    string           `json:"harness"`

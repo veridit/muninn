@@ -5,8 +5,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -55,11 +57,54 @@ func LoadNative(path string) ([]NativeMemory, error) {
 		return nil, err
 	}
 	assignNativeSIDs(f.Memories)
-	return f.Memories, nil
+	seen := map[string]NativeMemory{}
+	out := make([]NativeMemory, 0, len(f.Memories))
+	duplicates := 0
+	for _, m := range f.Memories {
+		if old, exists := seen[m.ID]; exists {
+			// Retries of the old append path could differ only in write time.
+			// Preserve the first row, but never collapse conflicting memories.
+			compare := old
+			compare.Created, compare.Updated, compare.SID = m.Created, m.Updated, m.SID
+			if !reflect.DeepEqual(compare, m) {
+				return nil, errors.New("native store has conflicting duplicate ids, refusing data loss")
+			}
+			duplicates++
+			continue
+		}
+		seen[m.ID] = m
+		out = append(out, m)
+	}
+	if duplicates > 0 {
+		if err := SaveNative(path, out); err != nil {
+			return nil, fmt.Errorf("repair native duplicates: %w", err)
+		}
+		// Count only, no IDs or memory text. Never print into an agent hook.
+		log, err := os.OpenFile(filepath.Join(filepath.Dir(path), "native-repairs.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			return nil, err
+		}
+		_, writeErr := fmt.Fprintf(log, "%s native duplicate repair removed=%d\n", time.Now().UTC().Format(time.RFC3339), duplicates)
+		closeErr := log.Close()
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+	}
+	return out, nil
 }
 
 // SaveNative writes the store atomically (temp file + rename).
 func SaveNative(path string, mems []NativeMemory) error {
+	ids := map[string]bool{}
+	for _, m := range mems {
+		if ids[m.ID] {
+			return errors.New("refusing to save duplicate native memory ids")
+		}
+		ids[m.ID] = true
+	}
 	assignNativeSIDs(mems)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

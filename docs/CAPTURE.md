@@ -5,6 +5,32 @@ from recall and from jcode's existing extractor. Do not disable an upstream
 extractor until a side-by-side comparison meets your capture-quality needs.
 No hook or live configuration is changed by `capture`.
 
+## Chunk persistence and timing
+
+Each chunk loads the native store once, applies all proposals to that snapshot,
+then atomically saves it once before committing the message checkpoint. Capture
+does not run a full reindex before extraction or after each candidate. Expensive
+embedding, neighbor and community work is deferred to the next recall hook,
+watcher or explicit `muninn index`. Until that refresh, `search`/`list` may show
+the previous index. Superseded indexed rows are retired immediately so they
+cannot be recalled from a stale index. The native file is the source of truth.
+
+Audit runs and capture reports expose `extract_ms`, `plan_ms`, `apply_ms` and
+`reindex_ms`. Planning includes the known-memory search and candidate dedupe.
+Reindex time is explicitly zero for deferred indexing. The known-memory exact
+matches and fresh native snapshot are reused for dedupe. Candidate-specific
+cosine still uses the existing searcher, never a new indexing pass or a reused
+transcript-query cosine score.
+
+Receipts and deterministic native IDs are saved with the memory. Retrying after
+a process dies between save and checkpoint does not append or reinforce it a
+second time, even if the regenerated model response changes. Native saves reject
+duplicate IDs. Loading a legacy store repairs equivalent duplicate rows once,
+keeping the first row (including its timestamps). Conflicting content/metadata
+under one ID fails closed rather than discarding data. Repairs append only a
+timestamp and removed count to private `native-repairs.log` alongside the native
+store, never transcript text or IDs and never harness stdout/stderr.
+
 ## Provider and privacy
 
 The default provider is **remote**: OpenAI-compatible chat completions at

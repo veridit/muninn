@@ -8,13 +8,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/veridit/muninn/internal/extract"
 	"github.com/veridit/muninn/internal/harness"
-	"github.com/veridit/muninn/internal/ingest"
 	"github.com/veridit/muninn/internal/project"
 )
 
@@ -33,6 +31,7 @@ type CaptureAction struct {
 	Origin string  `json:"origin"`
 }
 type CaptureReport struct {
+	CaptureTimings
 	Actions        []CaptureAction `json:"actions"`
 	Usage          extract.Usage   `json:"usage"`
 	LatencyMS      int64           `json:"latency_ms"`
@@ -40,6 +39,13 @@ type CaptureReport struct {
 	BacklogSkipped int             `json:"backlog_skipped"`
 	Rejected       int             `json:"rejected"`
 	Skipped        string          `json:"skipped,omitempty"`
+}
+
+type CaptureTimings struct {
+	ExtractMS int64 `json:"extract_ms"`
+	PlanMS    int64 `json:"plan_ms"`
+	ApplyMS   int64 `json:"apply_ms"`
+	ReindexMS int64 `json:"reindex_ms"`
 }
 
 func captureHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
@@ -53,6 +59,7 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 	}
 	defer func() {
 		audit.Report = report
+		audit.CaptureTimings = report.CaptureTimings
 		if runErr != nil {
 			audit.Error = auditSafe(runErr.Error())
 			audit.ErrorClass = extract.FailureClass(runErr)
@@ -279,6 +286,7 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 		}
 		text := chunk.String()
 		var result extract.Result
+		knownByContent := map[string]string{}
 		if strings.TrimSpace(text) != "" {
 			opts := a.RecallOptions()
 			opts.MinScore = 0
@@ -294,7 +302,9 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 			if len(query) > 4000 {
 				query = query[len(query)-4000:]
 			}
+			planStart := time.Now()
 			hits, err := a.Searcher.Search(ctx, query, opts)
+			report.PlanMS += time.Since(planStart).Milliseconds()
 			if err != nil {
 				return report, err
 			}
@@ -307,6 +317,7 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 					}
 					knownBytes += len(r.Unit.Body)
 					known = append(known, extract.Known{SID: r.Unit.SID, Content: r.Unit.Body})
+					knownByContent[r.Unit.Body] = r.Unit.SID
 				}
 			}
 			// Leave time to persist this chunk after the provider returns.
@@ -328,7 +339,9 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 				callCfg.MaxTokens = max(128, callCfg.MaxTokens)
 				providerCtx, callCancel = context.WithTimeout(providerCtx, 20*time.Second)
 			}
+			extractStart := time.Now()
 			result, err = extract.Run(providerCtx, callCfg, text, known)
+			report.ExtractMS += time.Since(extractStart).Milliseconds()
 			callCancel()
 			providerCancel()
 			audit.Calls = append(audit.Calls, result)
@@ -352,6 +365,12 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 			ids = append(ids, m.ID)
 		}
 		batch := captureHash(session + "\x00" + strings.Join(ids, "\x00"))
+		applyStart := time.Now()
+		writes, err := newCaptureBatch()
+		report.ApplyMS += time.Since(applyStart).Milliseconds()
+		if err != nil {
+			return report, err
+		}
 		local := map[string]bool{}
 		for n, c := range result.Candidates {
 			if local[c.Content] {
@@ -359,7 +378,23 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 				continue
 			}
 			local[c.Content] = true
-			action, err := b.capturePlan(ctx, a, c)
+			planStart := time.Now()
+			action, found := writes.exact(b, a, c)
+			// Reuse exact known-memory matches, never the transcript query's
+			// cosine as if it were the candidate's own embedding score.
+			if !found && !(c.Supersedes != "" && c.Trust == "high") {
+				if sid := knownByContent[c.Content]; sid != "" {
+					clean := c
+					clean.Supersedes = ""
+					action = CaptureAction{Candidate: clean, Action: "reinforce", Reason: "exact duplicate in known-memory snapshot", Target: sid}
+					found = true
+				}
+			}
+			var err error
+			if !found || (c.Supersedes != "" && c.Trust == "high") {
+				action, err = b.capturePlan(ctx, a, c)
+			}
+			report.PlanMS += time.Since(planStart).Milliseconds()
 			if err != nil {
 				return report, err
 			}
@@ -367,13 +402,22 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 			// Include the binding/home in receipts even when harness ids collide.
 			receipt := captureHash(session + "\x00" + batch + "\x00" + c.Content)
 			if !o.DryRun {
-				if err := b.captureApply(ctx, a, scope, action, receipt); err != nil {
+				applyStart = time.Now()
+				err := writes.apply(ctx, b, a, scope, &action, receipt)
+				report.ApplyMS += time.Since(applyStart).Milliseconds()
+				if err != nil {
 					return report, err
 				}
 			}
 			report.Actions = append(report.Actions, action)
 		}
 		if !o.DryRun {
+			applyStart = time.Now()
+			err := writes.save(ctx, a)
+			report.ApplyMS += time.Since(applyStart).Milliseconds()
+			if err != nil {
+				return report, err
+			}
 			tx, err := a.DB.BeginTx(ctx, nil)
 			if err != nil {
 				return report, err
@@ -488,68 +532,4 @@ func (b Binding) capturePlan(ctx context.Context, a *App, c extract.Candidate) (
 		}
 	}
 	return out, nil
-}
-
-func (b Binding) captureApply(ctx context.Context, a *App, scope string, action CaptureAction, receipt string) error {
-	b = b.Refresh(a)
-	// Validate again immediately before mutation. Never trust a model-provided sid.
-	if project.LooksSecret(action.Content) {
-		return errors.New("secret candidate refused")
-	}
-	mems, err := ingest.LoadNative(NativePath())
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	if action.Action == "reinforce" {
-		u, err := b.Resolve(a, action.Target)
-		if err != nil {
-			return err
-		}
-		if _, err = b.WriteScope(u.Scope); err != nil {
-			return err
-		}
-		for i := range mems {
-			m := &mems[i]
-			if m.Active && m.SID == u.SID {
-				if slices.Contains(m.CaptureEvents, receipt) {
-					return nil
-				}
-				m.Strength++
-				m.Updated = now
-				m.CaptureEvents = append(m.CaptureEvents, receipt)
-				if err := ingest.SaveNative(NativePath(), mems); err != nil {
-					return err
-				}
-				_, err = a.Reindex(ctx)
-				return err
-			}
-		}
-		// Upstream stores are read-only. Persist reinforcement evidence in muninn,
-		// instead of modifying jcode's graph or creating a duplicate native copy.
-		_, err = a.DB.ExecContext(ctx, `INSERT OR IGNORE INTO capture_reinforcements(event,sid,at_ns) VALUES(?,?,?)`, receipt, u.SID, now.UnixNano())
-		return err
-	}
-	for _, m := range mems {
-		if slices.Contains(m.CaptureEvents, receipt) {
-			if action.Action == "supersede" && action.Trust == "high" {
-				_, err = b.Forget(ctx, a, action.Target)
-				return err
-			}
-			return nil
-		}
-	}
-	h := captureHash(action.Origin + "\x00" + scope)
-	mems = append(mems, ingest.NativeMemory{ID: "cap_" + h[:16], Origin: action.Origin, Content: action.Content, Category: action.Category, Trust: action.Trust, Scope: scope, Active: true, Strength: 1, Created: now, Updated: now, CaptureEvents: []string{receipt}})
-	if err := ingest.SaveNative(NativePath(), mems); err != nil {
-		return err
-	}
-	if _, err := a.Reindex(ctx); err != nil {
-		return err
-	}
-	if action.Action == "supersede" && action.Trust == "high" {
-		_, err = b.Forget(ctx, a, action.Target)
-		return err
-	}
-	return nil
 }

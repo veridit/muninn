@@ -21,10 +21,11 @@ import (
 )
 
 type captureLLM struct {
-	server *httptest.Server
-	calls  atomic.Int32
-	reply  string
-	input  string
+	server      *httptest.Server
+	calls       atomic.Int32
+	reply       string
+	input       string
+	beforeReply atomic.Value
 }
 
 func fakeCapture(t *testing.T, f *scopetest.Fixture, reply string) *captureLLM {
@@ -32,6 +33,9 @@ func fakeCapture(t *testing.T, f *scopetest.Fixture, reply string) *captureLLM {
 	m := &captureLLM{reply: reply}
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.calls.Add(1)
+		if gate := m.beforeReply.Load(); gate != nil {
+			gate.(func())()
+		}
 		var v struct {
 			Messages []struct {
 				Content string `json:"content"`
