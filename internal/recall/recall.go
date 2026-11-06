@@ -58,6 +58,10 @@ type Engine struct {
 	DB       *store.DB
 	Searcher *search.Searcher
 	Options  search.Options
+	// SearchFunc optionally substitutes candidate retrieval for controlled
+	// experiments. Bindings, guards, gates and chronological injection tracking
+	// still run here. Nil preserves the production Searcher path.
+	SearchFunc func(context.Context, string, search.Options) ([]search.Result, error)
 	// RelativeFloor drops hits below this fraction of the best hit (0 = off).
 	RelativeFloor float64
 	// MinSemantic is the cosine a hit needs for automatic injection when an
@@ -100,7 +104,11 @@ func (e *Engine) Recall(ctx context.Context, r Request) (Response, error) {
 		o.Scopes = r.Scopes
 	}
 	o.ScopeFor = r.ScopeFor
-	results, err := e.Searcher.Search(ctx, Truncate(msg, MaxQueryBytes), o)
+	find := e.SearchFunc
+	if find == nil {
+		find = e.Searcher.Search
+	}
+	results, err := find(ctx, Truncate(msg, MaxQueryBytes), o)
 	if err != nil {
 		return Response{}, err
 	}

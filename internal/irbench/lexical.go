@@ -213,8 +213,15 @@ func (c *Corpus) Search(ctx context.Context, query string, o LexicalOptions, all
 			st.Candidates++
 			if allow == nil || allow(c.Docs[id].Unit) {
 				st.Scored++
-				top = topAdd(top, Hit{id, s}, o.K)
+				if o.K >= len(c.Docs) {
+					top = append(top, Hit{id, s})
+				} else {
+					top = topAdd(top, Hit{id, s}, o.K)
+				}
 			}
+		}
+		if o.K >= len(c.Docs) {
+			sort.Slice(top, func(i, j int) bool { return better(top[i], top[j]) })
 		}
 		return top, st, nil
 	}
