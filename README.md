@@ -4,7 +4,21 @@
 
 **Local-first memory recall for AI coding agents.** muninn indexes your memories
 on your own machine and injects the few that matter into the agent's context,
-automatically, before it answers. No account, no API key, no remote service.
+automatically, before it answers. Recall needs no account, API key or remote
+service. Optional automatic capture calls your configured model provider and
+requires its credentials. Capture is opt-in and keeps a private, local audit.
+
+## What's new in v0.4.0
+
+- Short memory IDs and strict instance, project and client scoping.
+- Compact SDD recall rows with the shipped date, ID and note columns.
+- Opt-in capture with resumable bounded hooks, category/trust decisions and
+  `muninn capture log` / `stats` for a private 30-day audit.
+- Project memories shared on `muninn-notes`, mounted at `.muninn-notes/`,
+  independently of your code branch. Preview legacy migration with
+  `muninn sync --migrate --dry-run`.
+
+See [CHANGELOG.md](CHANGELOG.md) and [capture documentation](docs/CAPTURE.md).
 
 It works with **jcode**, **Claude Code** and **Codex** through their hooks, with
 any MCP client through `muninn mcp`, and it has a local **web UI** and a **TUI**.
