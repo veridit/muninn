@@ -2,7 +2,8 @@
 # Real CLI, two clones and three isolated local stores. Only synthetic text.
 set -euo pipefail
 m="$1"
-root=$(mktemp -d "${TMPDIR%/}/muninn-branch-e2e.XXXXXX")
+tmp="${TMPDIR:-/tmp}"
+root=$(mktemp -d "${tmp%/}/muninn-branch-e2e.XXXXXX")
 trap 'rm -rf "$root"' EXIT
 export MUNINN_NO_EMBED=1
 export GIT_AUTHOR_NAME=synthetic GIT_COMMITTER_NAME=synthetic

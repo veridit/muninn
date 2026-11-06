@@ -2,7 +2,8 @@
 # Synthetic acceptance: the shared hook scans the notes cwd, never bypasses it.
 set -euo pipefail
 source_root=$(cd "$(dirname "$0")/.." && pwd)
-root=$(mktemp -d "${TMPDIR%/}/muninn-secret-hooks.XXXXXX")
+tmp="${TMPDIR:-/tmp}"
+root=$(mktemp -d "${tmp%/}/muninn-secret-hooks.XXXXXX")
 trap 'rm -rf "$root"' EXIT
 export GIT_AUTHOR_NAME=synthetic GIT_COMMITTER_NAME=synthetic
 export GIT_AUTHOR_EMAIL=synthetic@example.invalid GIT_COMMITTER_EMAIL=synthetic@example.invalid
