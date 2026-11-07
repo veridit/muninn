@@ -17,9 +17,10 @@ import (
 )
 
 func voteFixture() Graph {
-	g := Graph{Units: []store.Unit{{ID: 1, SID: "suspect", Origin: "native:suspect", Scope: "global", Body: "ACME-999 api.acme.invalid deployment", Active: true}}}
+	g := Graph{Units: []store.Unit{{ID: 1, SID: "suspect", Origin: "native:suspect", Scope: "global", Body: "ACME-999 api.acme.invalid deployment", Active: true}}, Topics: []TopicGroup{{ID: 1, Members: map[int64]int{1: 3}, Terms: map[string]int{"quartz": 12}}}}
 	for i := 2; i <= 13; i++ {
 		g.Units = append(g.Units, store.Unit{ID: int64(i), SID: fmt.Sprint(i), Scope: "client:acme:project", Body: fmt.Sprintf("ACME-%d api.acme.invalid deployment", i), Active: true})
+		g.Topics[0].Members[int64(i)] = 1
 		g.Edges = append(g.Edges, Edge{1, int64(i), .8})
 	}
 	for i := 14; i < 64; i++ {
@@ -47,12 +48,12 @@ func TestVotesAnchorsStrengthAndGrouping(t *testing.T) {
 	if len(groups) != 1 || groups[0].Count != 1 || !strings.Contains(p.Markdown(), "global -> client:acme (1)") {
 		t.Fatalf("groups=%+v", groups)
 	}
-	// Below-threshold neighbors cannot manufacture a vote, anchors still flag weak.
+	// Below-threshold neighbors cannot manufacture a vote, group evidence remains.
 	for i := range g.Edges {
 		g.Edges[i].Sim = .69
 	}
 	p, _ = Scan(g, Defaults(), nil)
-	if p.Entries[0].Strength != "weak" || p.Entries[0].Votes["client:acme"] != 0 {
+	if p.Entries[0].Strength != "group-only" || p.Entries[0].Votes["client:acme"] != 0 {
 		t.Fatal("similarity threshold ignored")
 	}
 }
@@ -88,12 +89,12 @@ func TestAnchorsDistinctiveRootsAndScopes(t *testing.T) {
 	if len(matches["client:acme"]) < 2 {
 		t.Fatalf("anchors=%v matches=%v", as, matches)
 	}
-	for in, want := range map[string]string{"jcode@global:hash": "jcode@global", "client:a:project": "client:a", "project:id": "project:id", "engram:demo": "engram:demo", "named:other": "named:other"} {
+	for in, want := range map[string]string{"jcode@global:hash": "jcode@global", "client:a:project": "client:a", "project:id": "project", "engram:demo": "engram", "named:other": "named"} {
 		if TopScope(in) != want {
 			t.Fatalf("TopScope(%s)", in)
 		}
 	}
-	for _, bad := range []Options{{-.1, 10, 3}, {.7, 0, 3}, {.7, 17, 3}, {.7, 10, -1}} {
+	for _, bad := range []Options{{MinSim: -.1}, {Majority: 0}, {Majority: 17}, {OwnMax: -1}} {
 		if bad.Validate() == nil {
 			t.Fatal("accepted invalid thresholds")
 		}
@@ -176,6 +177,9 @@ func TestJudgeBatchesStrongFirstRedactsAndLimits(t *testing.T) {
 		if strings.Contains(req.Messages[1].Content, secret) {
 			t.Error("sent secret")
 		}
+		if !strings.Contains(req.Messages[1].Content, `"heuristic_current_scope_client_groups"`) || !strings.Contains(req.Messages[1].Content, `"heuristic_proposed_scope_client_groups"`) || !strings.Contains(req.Messages[0].Content, "heuristic evidence only") {
+			t.Error("missing heuristic group evidence")
+		}
 		if !strings.Contains(req.Messages[1].Content, `"current_scope":"global"`) || strings.Contains(req.Messages[1].Content, `"decision":`) {
 			t.Error("judge input confuses current scope with plan state")
 		}
@@ -197,11 +201,11 @@ func TestJudgeBatchesStrongFirstRedactsAndLimits(t *testing.T) {
 	c := extract.Defaults()
 	c.Provider = "ollama"
 	c.BaseURL = server.URL
-	p := Plan{Entries: []Entry{{SID: "weak", Source: "global", Strength: "weak", Text: secret}, {SID: "strong", Source: "global", Strength: "strong", Text: secret}}}
-	if err := Judge(context.Background(), &p, c, 1); err != nil {
+	p := Plan{Entries: []Entry{{SID: "vote", Source: "global", Strength: "vote-only", Text: secret}, {SID: "group", Source: "global", Strength: "group-only", Text: secret}, {SID: "strong", Source: "global", Strength: "strong", Text: secret}}}
+	if err := Judge(context.Background(), &p, c, 3); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 1 || !reflect.DeepEqual(seen, []string{"strong"}) || p.Entries[0].Judged || p.Entries[1].Decision != "stay" {
+	if requests != 1 || !reflect.DeepEqual(seen, []string{"strong", "group", "vote"}) || !p.Entries[0].Judged || p.Entries[2].Decision != "stay" {
 		t.Fatalf("plan=%+v seen=%v", p, seen)
 	}
 	if err := Judge(context.Background(), &p, c, 0); err != nil || requests != 1 {

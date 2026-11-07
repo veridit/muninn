@@ -20,29 +20,32 @@ import (
 )
 
 type Options struct {
-	MinSim   float64 `json:"min_sim"`
-	Majority int     `json:"majority"`
-	OwnMax   int     `json:"own_max"`
+	GroupPurity float64 `json:"group_purity"`
+	GroupMin    int     `json:"group_min"`
+	GroupScore  int     `json:"group_score"`
+	MinSim      float64 `json:"min_sim"`
+	Majority    int     `json:"majority"`
+	OwnMax      int     `json:"own_max"`
 }
 
-func Defaults() Options { return Options{.70, 10, 3} }
+func Defaults() Options {
+	return Options{MinSim: .70, Majority: 10, OwnMax: 3, GroupPurity: 2.0 / 3, GroupMin: 5, GroupScore: 3}
+}
 func (o Options) Validate() error {
-	if math.IsNaN(o.MinSim) || math.IsInf(o.MinSim, 0) || o.MinSim < 0 || o.MinSim > 1 || o.Majority < 1 || o.Majority > 16 || o.OwnMax < 0 {
+	if math.IsNaN(o.MinSim) || math.IsInf(o.MinSim, 0) || o.MinSim < 0 || o.MinSim > 1 || o.Majority < 1 || o.Majority > 16 || o.OwnMax < 0 || math.IsNaN(o.GroupPurity) || math.IsInf(o.GroupPurity, 0) || o.GroupPurity <= .5 || o.GroupPurity > 1 || o.GroupMin < 1 || o.GroupScore < 1 {
 		return fmt.Errorf("invalid tidy thresholds")
 	}
 	return nil
 }
 
-// TopScope keeps named scopes intact and folds only documented child scopes.
+// TopScope folds client child scopes to client:<name>, all others to their
+// first colon-separated component, as used by client-group counts and votes.
 func TopScope(s string) string {
-	if strings.HasPrefix(s, "jcode@") {
-		s, _, _ = strings.Cut(s, ":")
-		return s
-	}
 	if strings.HasPrefix(s, "client:") {
 		p := strings.SplitN(s, ":", 3)
 		return p[0] + ":" + p[1]
 	}
+	s, _, _ = strings.Cut(s, ":")
 	return s
 }
 
@@ -53,38 +56,45 @@ type Neighbor struct {
 	Text  string  `json:"text"`
 }
 type Entry struct {
-	SID          string              `json:"sid"`
-	Origin       string              `json:"origin"`
-	Fingerprint  string              `json:"fingerprint"`
-	Source       string              `json:"source"`
-	Target       string              `json:"target"`
-	Text         string              `json:"text"` // redacted preview only, never used for writes
-	Strength     string              `json:"strength"`
-	Votes        map[string]int      `json:"votes"`
-	Anchors      []string            `json:"anchors,omitempty"`
-	AnchorScopes map[string][]string `json:"anchor_scopes,omitempty"`
-	Neighbors    []Neighbor          `json:"neighbors"`
-	Decision     string              `json:"decision"`
-	Reason       string              `json:"reason"`
-	Judged       bool                `json:"judged"`
+	GroupScores        map[string]int      `json:"group_scores"`
+	OwnClientGroups    []ClientGroup       `json:"own_client_groups"`
+	TargetClientGroups []ClientGroup       `json:"target_client_groups"`
+	SID                string              `json:"sid"`
+	Origin             string              `json:"origin"`
+	Fingerprint        string              `json:"fingerprint"`
+	Source             string              `json:"source"`
+	Target             string              `json:"target"`
+	Text               string              `json:"text"` // redacted preview only, never used for writes
+	Strength           string              `json:"strength"`
+	Votes              map[string]int      `json:"votes"`
+	Anchors            []string            `json:"anchors,omitempty"`
+	AnchorScopes       map[string][]string `json:"anchor_scopes,omitempty"`
+	Neighbors          []Neighbor          `json:"neighbors"`
+	Decision           string              `json:"decision"`
+	Reason             string              `json:"reason"`
+	Judged             bool                `json:"judged"`
 }
 type Plan struct {
-	Version  int       `json:"version"`
-	Created  time.Time `json:"created"`
-	Database string    `json:"database"`
-	Options  Options   `json:"options"`
-	Units    int       `json:"units"`
-	Entries  []Entry   `json:"entries"`
-	General  []Entry   `json:"maybe_general"`
-	Scopes   []string  `json:"scopes"`
+	ClientGroups []ClientGroup     `json:"client_groups"`
+	Classes      map[string]int    `json:"class_counts"`
+	Transitions  []ClassTransition `json:"class_transitions"`
+	Version      int               `json:"version"`
+	Created      time.Time         `json:"created"`
+	Database     string            `json:"database"`
+	Options      Options           `json:"options"`
+	Units        int               `json:"units"`
+	Entries      []Entry           `json:"entries"`
+	General      []Entry           `json:"maybe_general"`
+	Scopes       []string          `json:"scopes"`
 }
 type Edge struct {
 	From, To int64
 	Sim      float64
 }
 type Graph struct {
-	Units []store.Unit
-	Edges []Edge
+	Topics []TopicGroup
+	Units  []store.Unit
+	Edges  []Edge
 }
 
 // Fingerprint makes reviewed plans fail closed after content, metadata or scope changes.
@@ -189,6 +199,10 @@ func ReadGraph(ctx context.Context, path string) (Graph, error) {
 	if err != nil {
 		return g, err
 	}
+	g.Topics, err = readTopicGroups(ctx, tx, targets)
+	if err != nil {
+		return g, err
+	}
 	return g, tx.Commit()
 }
 
@@ -216,6 +230,8 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 			edges[e.From] = append(edges[e.From], e)
 		}
 	}
+	selectedGroups, groupScores := clientGroups(g, o)
+	p.ClientGroups = selectedGroups
 	anchors := DeriveAnchors(g.Units, roots)
 	for _, u := range g.Units {
 		own := TopScope(u.Scope)
@@ -260,45 +276,36 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 		vote := !tied && best >= o.Majority && votes[own] <= o.OwnMax
 		matches := MatchAnchors(u.Title+" "+u.Body, anchors)
 		entry.AnchorScopes = matches
-		anchorTarget := ""
-		maxMatch := 0
-		anchorTie := false
-		if len(matches[own]) == 0 {
-			for _, s := range p.Scopes {
-				if s == own {
-					continue
-				}
-				n := len(matches[s])
-				if n > maxMatch {
-					maxMatch = n
-					anchorTarget = s
-					anchorTie = false
-				} else if n == maxMatch && n > 0 {
-					anchorTie = true
-				}
+		entry.GroupScores = groupScores[u.ID]
+		groupTarget := ""
+		for _, s := range p.Scopes {
+			if s == own || entry.GroupScores[s] < o.GroupScore || entry.GroupScores[s] < 3*entry.GroupScores[own] {
+				continue
+			}
+			if groupTarget == "" || entry.GroupScores[s] > entry.GroupScores[groupTarget] {
+				groupTarget = s
 			}
 		}
-		anchor := maxMatch > 0
-		target := ""
-		if vote {
+		target := groupTarget
+		if vote && entry.GroupScores[voteTarget] >= o.GroupScore && entry.GroupScores[voteTarget] >= 3*entry.GroupScores[own] {
 			target = voteTarget
-		} else if anchor {
-			target = anchorTarget
+		}
+		if target == "" && vote {
+			target = voteTarget
 		}
 		if target != "" {
 			entry.Target = target
-			entry.Strength = "weak"
-			if vote && anchor && !anchorTie && voteTarget == anchorTarget {
-				entry.Strength = "strong"
+			entry.Strength = "vote-only"
+			if groupTarget != "" {
+				entry.Strength = "group-only"
+				if vote && target == voteTarget {
+					entry.Strength = "strong"
+				}
 			}
 			entry.Anchors = matches[target]
-			entry.Reason = fmt.Sprintf("votes target=%d own=%d; matching anchors=%s", votes[target], votes[own], strings.Join(entry.Anchors, ", "))
-			if anchorTie {
-				entry.Reason += "; ambiguous anchors across scopes, target is a review proposal"
-			}
-			if vote && anchor && voteTarget != anchorTarget {
-				entry.Reason += "; conflicting anchor target " + anchorTarget
-			}
+			entry.OwnClientGroups = topClientGroups(p.ClientGroups, own)
+			entry.TargetClientGroups = topClientGroups(p.ClientGroups, target)
+			entry.Reason = fmt.Sprintf("heuristic evidence: votes target=%d own=%d; groupScore target=%d own=%d; matching anchors=%s", votes[target], votes[own], entry.GroupScores[target], entry.GroupScores[own], strings.Join(entry.Anchors, ", "))
 			p.Entries = append(p.Entries, entry)
 		} else {
 			clients, total, lo, hi := 0, 0, 17, 0
@@ -320,7 +327,7 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 	sort.SliceStable(p.Entries, func(i, j int) bool {
 		a, b := p.Entries[i], p.Entries[j]
 		if a.Strength != b.Strength {
-			return a.Strength == "strong"
+			return classRank(a.Strength) < classRank(b.Strength)
 		}
 		if a.Source != b.Source {
 			return a.Source < b.Source
@@ -330,6 +337,7 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 		}
 		return a.SID < b.SID
 	})
+	p.RefreshCounts()
 	return p, nil
 }
 
@@ -366,6 +374,12 @@ func (p Plan) Groups() []Group {
 func (p Plan) Markdown() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Muninn tidy review\n\n%d active canonical units, %d suspects, %d maybe-general candidates.\n\nUnjudged proposals are unsure, never automatically approved. Review decisions and targets in the JSON before apply. Memory text is never rewritten.\n", p.Units, len(p.Entries), len(p.General))
+	writeSignatures(&b, p)
+	fmt.Fprintf(&b, "\n## Counts per class\n\nstrong=%d group-only=%d vote-only=%d\n", p.ClassCounts()["strong"], p.ClassCounts()["group-only"], p.ClassCounts()["vote-only"])
+	b.WriteString("\n## Source -> target counts per class\n")
+	for _, t := range p.ClassTransitions() {
+		fmt.Fprintf(&b, "\n- %s -> %s [%s]: %d\n", t.Source, t.Target, t.Class, t.Count)
+	}
 	for _, g := range p.Groups() {
 		fmt.Fprintf(&b, "\n## %s -> %s (%d)\n\nmove=%d stay=%d unsure=%d\n", g.Source, g.Target, g.Count, g.Decisions["move"], g.Decisions["stay"], g.Decisions["unsure"])
 		for _, e := range g.Examples {

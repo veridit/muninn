@@ -30,10 +30,14 @@ One static binary for macOS, Linux and Windows (arm64 and amd64).
 ## Deliberate cleanup with `muninn tidy`
 
 `tidy` is an owner CLI tool, never a hook, MCP tool, TUI action or web route.
-It reads the whole existing neighbor graph, combining cross-scope votes with
-corpus-derived ticket prefixes, hostnames and distinctive terms, plus repository
-and client folder names discovered on disk. It does not rewrite dated notes or
-revalidate their historical truth.
+It reads the existing index without rewriting dated notes or revalidating their
+historical truth. These terms distinguish its evidence:
+
+- **Similarity neighborhood**: a memory's stored corpus-wide kNN neighbors
+  (`neighbors`, with similarity), not a topic or client group.
+- **Topic group**: an existing corpus-wide Louvain community of concepts
+  (`concepts`, `communities`, `unit_communities`). Tidy reuses it, never rebuilds it.
+- **Client group**: a topic group that mostly belongs to one scope.
 
 ```sh
 muninn tidy scan                         # read-only scan, private JSON + Markdown
@@ -43,13 +47,35 @@ muninn tidy apply /path/to/plan.json --dry-run
 muninn tidy apply /path/to/plan.json --only 'global->client:example'
 ```
 
-Defaults are `--min-sim 0.70 --majority 10 --own-max 3`. Votes plus matching
-anchors are strong suspects, one signal is weak, and evenly mixed client
-neighbors are listed separately as maybe general. Only explicit `move` decisions
-apply. The optional judge receives redacted memory text, five nearest neighbors
-and matched anchors in batches of five, strong first. Its default limit is 100;
-invalid answers become `unsure`. Scan writes only the plan and summary, normally
-under the data directory's `tidy/`, and never refreshes the index.
+Defaults are `--min-sim 0.70 --majority 10 --own-max 3`, plus
+`--group-purity 0.6666666666666666 --group-min 5 --group-score 3`.
+Top scope is `client:<name>` with child scopes dropped, otherwise the part before
+the first colon (including `project` for `project:<id>`). Active canonical memory
+identities are counted once, not once per mirror. For each topic group, tidy
+counts member memories by top scope. It is scope C's client group when C has at
+least two-thirds of members and at least max(5, 1% of C's memories) members.
+A label uses its five most frequent concepts among canonical member memories
+(lexical tie-breaks). Groups whose entire label is dates (`YYYY-MM-DD`) or
+integers are excluded.
+
+`groupScore(u,C)` sums the stored concept counts `n` for u's memberships in C's
+client groups. A group signal requires score >= 3 and >= three times u's own-scope
+score. The neighbor vote is unchanged: similarity >= 0.70, at least 10 votes for
+the other scope and at most 3 for the current top scope. Classes are **strong**
+(both vote and group signal for the same target), **group-only** (group signal
+without a vote for that target), and **vote-only** (vote without a group signal).
+Anchors remain extra evidence but cannot create suspects on their own. Evenly
+mixed client neighborhoods remain separately listed as maybe general.
+
+Plans and Markdown include each scope's top five client groups by member count
+as its signature, class counts, and source-to-target counts per class. Only explicit
+`move` decisions apply. The optional judge receives redacted memory text, five
+nearest neighbors, matched anchors, group scores, and up to five client-group
+labels each for the current and proposed scopes, clearly marked heuristic evidence.
+Batches of five run strong first, then group-only, then vote-only. The default
+limit is 100, invalid answers become `unsure`. Scan writes only private plan and
+summary files (0600), normally under the data directory's `tidy/`, and never
+refreshes the index or writes to the memory store.
 
 Before applying, stop other manual memory writers. Apply blocks capture with its
 lease, rejects stale reviewed entries, backs up `memories.json`, saves recovery

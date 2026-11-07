@@ -2,14 +2,14 @@ package tidy
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/veridit/muninn/internal/store"
 )
 
-func TestAmbiguousAnchorsRemainWeakSuspects(t *testing.T) {
+func TestAmbiguousAnchorsAloneDoNotCreateSuspects(t *testing.T) {
 	g := voteFixture()
+	g.Topics = nil
 	g.Edges = nil
 	g.Units[0].Body = "ACME-999 ZETA-999"
 	for i := 70; i < 82; i++ {
@@ -25,8 +25,8 @@ func TestAmbiguousAnchorsRemainWeakSuspects(t *testing.T) {
 			found = &p.Entries[i]
 		}
 	}
-	if found == nil || found.Strength != "weak" || !strings.Contains(found.Reason, "ambiguous anchors") || len(found.AnchorScopes) != 2 {
-		t.Fatalf("ambiguous suspect=%+v", found)
+	if found != nil {
+		t.Fatalf("anchors alone created suspect=%+v", found)
 	}
 }
 func TestLiteralNamedScopesMayContainSpaces(t *testing.T) {

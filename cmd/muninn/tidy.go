@@ -62,6 +62,10 @@ func tidyCmd() *cobra.Command {
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "%d active canonical units; %d suspects; %d maybe general\n", plan.Units, len(plan.Entries), len(plan.General))
+		fmt.Fprintf(cmd.OutOrStdout(), "Classes: strong=%d group-only=%d vote-only=%d\n", plan.Classes["strong"], plan.Classes["group-only"], plan.Classes["vote-only"])
+		for _, t := range plan.Transitions {
+			fmt.Fprintf(cmd.OutOrStdout(), "%s -> %s [%s]: %d\n", t.Source, t.Target, t.Class, t.Count)
+		}
 		for _, g := range plan.Groups() {
 			fmt.Fprintf(cmd.OutOrStdout(), "%s -> %s: %d (move=%d stay=%d unsure=%d)\n", g.Source, g.Target, g.Count, g.Decisions["move"], g.Decisions["stay"], g.Decisions["unsure"])
 		}
@@ -72,8 +76,11 @@ func tidyCmd() *cobra.Command {
 	scan.Flags().Float64Var(&o.MinSim, "min-sim", o.MinSim, "minimum neighbor similarity")
 	scan.Flags().IntVar(&o.Majority, "majority", o.Majority, "minimum votes for another scope")
 	scan.Flags().IntVar(&o.OwnMax, "own-max", o.OwnMax, "maximum votes for the current scope")
+	scan.Flags().Float64Var(&o.GroupPurity, "group-purity", o.GroupPurity, "minimum share of a topic group's members in its owner scope")
+	scan.Flags().IntVar(&o.GroupMin, "group-min", o.GroupMin, "minimum owner members in a client group (also at least 1% of the scope)")
+	scan.Flags().IntVar(&o.GroupScore, "group-score", o.GroupScore, "minimum target client-group concept score (also at least 3x own score)")
 	scan.Flags().BoolVar(&judge, "judge", false, "ask the configured capture model to judge proposals")
-	scan.Flags().IntVar(&maxJudge, "max-judge", 100, "maximum suspects sent to the judge (strong first, 0 disables calls)")
+	scan.Flags().IntVar(&maxJudge, "max-judge", 100, "maximum suspects sent to the judge (strong, group-only, vote-only; 0 disables calls)")
 	var dry bool
 	var only string
 	apply := &cobra.Command{Use: "apply PLAN", Short: "Apply reviewed move decisions, with backup and undo commands", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
