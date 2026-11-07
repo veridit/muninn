@@ -121,6 +121,19 @@ func TestHarmlessNonMoveTargetsNormalizeToEmpty(t *testing.T) {
 	}
 }
 
+func TestInvalidJudgeDiagnosticsKeepExactRawObjects(t *testing.T) {
+	object := `{"decision":"move","target":"client:garnet","reason":"synthetic"}`
+	entries := []Entry{{Source: "client:quartz"}}
+	vs, anomalies := parseVerdicts("["+object+"]", entries, []string{"client:garnet"})
+	if vs[0].Reason != "invalid judge answer" || len(anomalies) != 1 || anomalies[0].Index != 0 || anomalies[0].Raw != object {
+		t.Fatalf("verdicts=%v anomalies=%v", vs, anomalies)
+	}
+	vs, anomalies = parseVerdicts("[]", entries, nil)
+	if vs[0].Reason != "invalid judge answer" || len(anomalies) != 1 || anomalies[0].Index != -1 || anomalies[0].Raw != "[]" {
+		t.Fatalf("verdicts=%v anomalies=%v", vs, anomalies)
+	}
+}
+
 func TestPrivateJudgeDebugAndPerEntryAllowlist(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
