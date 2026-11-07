@@ -150,7 +150,7 @@ func clientGroups(g Graph, o Options) ([]ClientGroup, map[int64]map[string]int) 
 			continue
 		}
 		for s, count := range counts {
-			if float64(count) < o.GroupPurity*float64(total) || count < max(o.GroupMin, int(math.Ceil(float64(sizes[s])*.01))) {
+			if float64(count) < o.GroupPurity*float64(total) || count < max(o.GroupMin, int(math.Ceil(float64(sizes[s])*o.GroupFloor))) {
 				continue
 			}
 			selected = append(selected, ClientGroup{topic.ID, s, redactLabel(label), count, total})
@@ -244,7 +244,16 @@ func (p *Plan) RefreshCounts() { p.Classes = p.ClassCounts(); p.Transitions = p.
 
 func writeSignatures(b io.Writer, p Plan) {
 	io.WriteString(b, "\n## Client-group signatures (heuristic evidence)\n")
+	scopes := map[string]bool{}
 	for _, scope := range p.Scopes {
+		scopes[TopScope(scope)] = true
+	}
+	var ordered []string
+	for scope := range scopes {
+		ordered = append(ordered, scope)
+	}
+	sort.Strings(ordered)
+	for _, scope := range ordered {
 		fmt.Fprintf(b, "\n### %s\n", scope)
 		groups := topClientGroups(p.ClientGroups, scope)
 		if len(groups) == 0 {

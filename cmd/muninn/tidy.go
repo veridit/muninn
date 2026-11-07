@@ -50,19 +50,20 @@ func tidyCmd() *cobra.Command {
 			return err
 		}
 		plan.Database = config.DBPath()
-		if judge {
-			if err = tidy.Judge(cmd.Context(), &plan, cfg.Extract, maxJudge); err != nil {
-				return err
-			}
-		}
 		if out == "" {
 			out = filepath.Join(config.DataDir(), "tidy", "plan-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".json")
+		}
+		if judge {
+			if err = tidy.JudgeWithDebug(cmd.Context(), &plan, cfg.Extract, maxJudge, out+".judge-debug.jsonl"); err != nil {
+				return err
+			}
 		}
 		if err = saveTidyPlan(out, plan); err != nil {
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "%d active canonical units; %d suspects; %d maybe general\n", plan.Units, len(plan.Entries), len(plan.General))
 		fmt.Fprintf(cmd.OutOrStdout(), "Classes: strong=%d group-only=%d vote-only=%d\n", plan.Classes["strong"], plan.Classes["group-only"], plan.Classes["vote-only"])
+		fmt.Fprintf(cmd.OutOrStdout(), "Dropped before judging: boundary=%d invalid-target=%d\n", plan.DroppedBoundary, plan.DroppedInvalidTarget)
 		for _, t := range plan.Transitions {
 			fmt.Fprintf(cmd.OutOrStdout(), "%s -> %s [%s]: %d\n", t.Source, t.Target, t.Class, t.Count)
 		}
@@ -77,7 +78,8 @@ func tidyCmd() *cobra.Command {
 	scan.Flags().IntVar(&o.Majority, "majority", o.Majority, "minimum votes for another scope")
 	scan.Flags().IntVar(&o.OwnMax, "own-max", o.OwnMax, "maximum votes for the current scope")
 	scan.Flags().Float64Var(&o.GroupPurity, "group-purity", o.GroupPurity, "minimum share of a topic group's members in its owner scope")
-	scan.Flags().IntVar(&o.GroupMin, "group-min", o.GroupMin, "minimum owner members in a client group (also at least 1% of the scope)")
+	scan.Flags().IntVar(&o.GroupMin, "group-min", o.GroupMin, "minimum owner members in a client group")
+	scan.Flags().Float64Var(&o.GroupFloor, "group-floor", o.GroupFloor, "minimum owner members as a fraction of scope size (0 uses group-min only)")
 	scan.Flags().IntVar(&o.GroupScore, "group-score", o.GroupScore, "minimum target client-group concept score (also at least 3x own score)")
 	scan.Flags().BoolVar(&judge, "judge", false, "ask the configured capture model to judge proposals")
 	scan.Flags().IntVar(&maxJudge, "max-judge", 100, "maximum suspects sent to the judge (strong, group-only, vote-only; 0 disables calls)")

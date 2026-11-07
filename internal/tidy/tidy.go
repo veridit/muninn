@@ -22,6 +22,7 @@ import (
 type Options struct {
 	GroupPurity float64 `json:"group_purity"`
 	GroupMin    int     `json:"group_min"`
+	GroupFloor  float64 `json:"group_floor"`
 	GroupScore  int     `json:"group_score"`
 	MinSim      float64 `json:"min_sim"`
 	Majority    int     `json:"majority"`
@@ -29,9 +30,12 @@ type Options struct {
 }
 
 func Defaults() Options {
-	return Options{MinSim: .70, Majority: 10, OwnMax: 3, GroupPurity: 2.0 / 3, GroupMin: 5, GroupScore: 3}
+	return Options{MinSim: .70, Majority: 10, OwnMax: 3, GroupPurity: 2.0 / 3, GroupMin: 5, GroupFloor: .01, GroupScore: 3}
 }
 func (o Options) Validate() error {
+	if math.IsNaN(o.GroupFloor) || math.IsInf(o.GroupFloor, 0) || o.GroupFloor < 0 || o.GroupFloor > 1 {
+		return fmt.Errorf("--group-floor must be between 0 and 1")
+	}
 	if math.IsNaN(o.GroupPurity) || math.IsInf(o.GroupPurity, 0) || o.GroupPurity <= .5 || o.GroupPurity > 1 {
 		return fmt.Errorf("--group-purity must be greater than 0.5 and at most 1")
 	}
@@ -82,17 +86,19 @@ type Entry struct {
 	Judged             bool                `json:"judged"`
 }
 type Plan struct {
-	ClientGroups []ClientGroup     `json:"client_groups"`
-	Classes      map[string]int    `json:"class_counts"`
-	Transitions  []ClassTransition `json:"class_transitions"`
-	Version      int               `json:"version"`
-	Created      time.Time         `json:"created"`
-	Database     string            `json:"database"`
-	Options      Options           `json:"options"`
-	Units        int               `json:"units"`
-	Entries      []Entry           `json:"entries"`
-	General      []Entry           `json:"maybe_general"`
-	Scopes       []string          `json:"scopes"`
+	DroppedBoundary      int               `json:"dropped_boundary"`
+	DroppedInvalidTarget int               `json:"dropped_invalid_target"`
+	ClientGroups         []ClientGroup     `json:"client_groups"`
+	Classes              map[string]int    `json:"class_counts"`
+	Transitions          []ClassTransition `json:"class_transitions"`
+	Version              int               `json:"version"`
+	Created              time.Time         `json:"created"`
+	Database             string            `json:"database"`
+	Options              Options           `json:"options"`
+	Units                int               `json:"units"`
+	Entries              []Entry           `json:"entries"`
+	General              []Entry           `json:"maybe_general"`
+	Scopes               []string          `json:"scopes"`
 }
 type Edge struct {
 	From, To int64
@@ -228,15 +234,25 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 	}
 	units := map[int64]store.Unit{}
 	scopes := map[string]bool{}
+	topScopes := map[string]bool{}
 	edges := map[int64][]Edge{}
 	for _, u := range g.Units {
 		units[u.ID] = u
-		scopes[TopScope(g.scopeFor(u))] = true
+		s := g.scopeFor(u)
+		topScopes[TopScope(s)] = true
+		if writableScope(s) {
+			scopes[s] = true
+		}
 	}
 	for s := range scopes {
 		p.Scopes = append(p.Scopes, s)
 	}
 	sort.Strings(p.Scopes)
+	var tops []string
+	for s := range topScopes {
+		tops = append(tops, s)
+	}
+	sort.Strings(tops)
 	for _, e := range g.Edges {
 		if _, ok := units[e.To]; ok {
 			edges[e.From] = append(edges[e.From], e)
@@ -252,6 +268,7 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 	for _, u := range g.Units {
 		own := TopScope(g.scopeFor(u))
 		votes := map[string]int{}
+		concreteVotes := map[string]int{}
 		ns := edges[u.ID]
 		sort.Slice(ns, func(i, j int) bool {
 			if ns[i].Sim == ns[j].Sim {
@@ -273,12 +290,13 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 			}
 			if e.Sim >= o.MinSim {
 				votes[TopScope(g.scopeFor(v))]++
+				concreteVotes[g.scopeFor(v)]++
 			}
 		}
 		voteTarget := ""
 		best := 0
 		tied := false
-		for _, s := range p.Scopes {
+		for _, s := range tops {
 			if s == own {
 				continue
 			}
@@ -295,7 +313,7 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 		entry.AnchorScopes = matches
 		entry.GroupScores = groupScores[u.ID]
 		groupTarget := ""
-		for _, s := range p.Scopes {
+		for _, s := range tops {
 			if s == own || entry.GroupScores[s] < o.GroupScore || entry.GroupScores[s] < 3*entry.GroupScores[own] {
 				continue
 			}
@@ -311,7 +329,15 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 			target = voteTarget
 		}
 		if target != "" {
-			entry.Target = target
+			entry.Target = concreteTarget(target, p.Scopes, concreteVotes)
+			if entry.Target == "" {
+				p.DroppedInvalidTarget++
+				continue
+			}
+			if !targetAllowed(entry.EffectiveSource, entry.Target) {
+				p.DroppedBoundary++
+				continue
+			}
 			entry.Strength = "vote-only"
 			if groupTarget != "" {
 				entry.Strength = "group-only"
@@ -391,6 +417,7 @@ func (p Plan) Groups() []Group {
 func (p Plan) Markdown() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Muninn tidy review\n\n%d active canonical units, %d suspects, %d maybe-general candidates.\n\nUnjudged proposals are unsure, never automatically approved. Review decisions and targets in the JSON before apply. Memory text is never rewritten.\n", p.Units, len(p.Entries), len(p.General))
+	fmt.Fprintf(&b, "\nDropped before judging: %d provenance-boundary proposals, %d without a concrete writable target.\n", p.DroppedBoundary, p.DroppedInvalidTarget)
 	writeSignatures(&b, p)
 	fmt.Fprintf(&b, "\n## Counts per class\n\nstrong=%d group-only=%d vote-only=%d\n", p.ClassCounts()["strong"], p.ClassCounts()["group-only"], p.ClassCounts()["vote-only"])
 	b.WriteString("\n## Source -> target counts per class\n")

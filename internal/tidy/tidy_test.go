@@ -19,7 +19,7 @@ import (
 func voteFixture() Graph {
 	g := Graph{Units: []store.Unit{{ID: 1, SID: "suspect", Origin: "native:suspect", Scope: "global", Body: "ACME-999 api.acme.invalid deployment", Active: true}}, Topics: []TopicGroup{{ID: 1, Members: map[int64]int{1: 3}, Terms: map[string]int{"quartz": 12}}}}
 	for i := 2; i <= 13; i++ {
-		g.Units = append(g.Units, store.Unit{ID: int64(i), SID: fmt.Sprint(i), Scope: "client:acme:project", Body: fmt.Sprintf("ACME-%d api.acme.invalid deployment", i), Active: true})
+		g.Units = append(g.Units, store.Unit{ID: int64(i), SID: fmt.Sprint(i), Scope: "jcode@acme", Body: fmt.Sprintf("ACME-%d api.acme.invalid deployment", i), Active: true})
 		g.Topics[0].Members[int64(i)] = 1
 		g.Edges = append(g.Edges, Edge{1, int64(i), .8})
 	}
@@ -38,14 +38,14 @@ func TestVotesAnchorsStrengthAndGrouping(t *testing.T) {
 		t.Fatalf("entries=%+v", p.Entries)
 	}
 	e := p.Entries[0]
-	if e.Strength != "strong" || e.Target != "client:acme" || e.Decision != "unsure" || e.Votes["client:acme"] != 12 || len(e.Neighbors) != 5 {
+	if e.Strength != "strong" || e.Target != "jcode@acme" || e.Decision != "unsure" || e.Votes["jcode@acme"] != 12 || len(e.Neighbors) != 5 {
 		t.Fatalf("entry=%+v", e)
 	}
 	if !strings.Contains(strings.Join(e.Anchors, ","), "acme-#") {
 		t.Fatal("ticket prefix not derived")
 	}
 	groups := p.Groups()
-	if len(groups) != 1 || groups[0].Count != 1 || !strings.Contains(p.Markdown(), "global -> client:acme (1)") {
+	if len(groups) != 1 || groups[0].Count != 1 || !strings.Contains(p.Markdown(), "global -> jcode@acme (1)") {
 		t.Fatalf("groups=%+v", groups)
 	}
 	// Below-threshold neighbors cannot manufacture a vote, group evidence remains.
@@ -53,14 +53,14 @@ func TestVotesAnchorsStrengthAndGrouping(t *testing.T) {
 		g.Edges[i].Sim = .69
 	}
 	p, _ = Scan(g, Defaults(), nil)
-	if p.Entries[0].Strength != "group-only" || p.Entries[0].Votes["client:acme"] != 0 {
+	if p.Entries[0].Strength != "group-only" || p.Entries[0].Votes["jcode@acme"] != 0 {
 		t.Fatal("similarity threshold ignored")
 	}
 }
 func TestVoteOwnMaxAndGeneral(t *testing.T) {
 	g := Graph{Units: []store.Unit{{ID: 1, SID: "one", Scope: "global", Body: "note"}}}
 	for i := 2; i <= 16; i++ {
-		s := "client:acme"
+		s := "jcode@acme"
 		if i > 12 {
 			s = "global"
 		}
@@ -84,9 +84,9 @@ func TestVoteOwnMaxAndGeneral(t *testing.T) {
 }
 func TestAnchorsDistinctiveRootsAndScopes(t *testing.T) {
 	g := voteFixture()
-	as := DeriveAnchors(g.Units, map[string][]string{"client:acme": {filepath.Join(t.TempDir(), "acme")}})
+	as := DeriveAnchors(g.Units, map[string][]string{"jcode@acme": {filepath.Join(t.TempDir(), "acme")}})
 	matches := MatchAnchors("ACME-123456 api.acme.invalid", as)
-	if len(matches["client:acme"]) < 2 {
+	if len(matches["jcode@acme"]) < 2 {
 		t.Fatalf("anchors=%v matches=%v", as, matches)
 	}
 	for in, want := range map[string]string{"jcode@global:hash": "jcode@global", "client:a:project": "client:a", "project:id": "project", "engram:demo": "engram", "named:other": "named"} {
@@ -157,13 +157,13 @@ func TestReadGraphCanonicalSuppressionAndReadOnly(t *testing.T) {
 }
 func TestJudgeBadAnswersBecomeUnsure(t *testing.T) {
 	entries := []Entry{{Source: "global"}}
-	for _, raw := range []string{"garbage", `[{"decision":"move","target":"invented","reason":"x"}]`, `[{"decision":"move","target":"client:a","reason":"x","extra":1}]`, `[{"decision":"stay","target":"global","reason":"two\nlines"}]`, `[]`, `[{"decision":"move","target":"client:a","reason":"x"}] trailing`} {
-		if got := ParseVerdicts(raw, entries, []string{"client:a"}); len(got) != 1 || got[0].Decision != "unsure" {
+	for _, raw := range []string{"garbage", `[{"decision":"move","target":"invented","reason":"x"}]`, `[{"decision":"move","target":"jcode@a","reason":"x","extra":1}]`, `[{"decision":"stay","target":"global","reason":"two\nlines"}]`, `[]`, `[{"decision":"move","target":"jcode@a","reason":"x"}] trailing`} {
+		if got := ParseVerdicts(raw, entries, []string{"jcode@a"}); len(got) != 1 || got[0].Decision != "unsure" {
 			t.Fatalf("accepted %s: %+v", raw, got)
 		}
 	}
-	good := `[{"decision":"move","target":"client:a","reason":"belongs to this client"}]`
-	if ParseVerdicts(good, entries, []string{"client:a"})[0].Decision != "move" {
+	good := `[{"decision":"move","target":"jcode@a","reason":"belongs to this client"}]`
+	if ParseVerdicts(good, entries, []string{"jcode@a"})[0].Decision != "move" {
 		t.Fatal("valid verdict rejected")
 	}
 }
@@ -223,7 +223,7 @@ func TestSelectionsAndStaleness(t *testing.T) {
 	g := voteFixture()
 	p, _ := Scan(g, Defaults(), nil)
 	p.Entries[0].Decision = "move"
-	if es, err := CheckSnapshot(p, g, "global->client:acme"); err != nil || len(es) != 1 {
+	if es, err := CheckSnapshot(p, g, "global->jcode@acme"); err != nil || len(es) != 1 {
 		t.Fatalf("selected=%v err=%v", es, err)
 	}
 	g.Units[0].Body = "changed"

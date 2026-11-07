@@ -63,7 +63,7 @@ func TestGroupScoreSumsStoredNAndThreeTimesOwn(t *testing.T) {
 	// Both topic groups belong to acme, including the outsider's n.
 	g.Topics = append(g.Topics, TopicGroup{ID: 2, Members: map[int64]int{1: 2, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1}, Terms: map[string]int{"garnet": 5}})
 	_, scores := clientGroups(g, Defaults())
-	if scores[1]["client:acme"] != 5 {
+	if scores[1]["jcode@acme"] != 5 {
 		t.Fatalf("scores=%v", scores[1])
 	}
 	// An own-scope group contributes 2, so target 5 fails the ratio.
@@ -194,11 +194,11 @@ func TestMultipleGroupTargetsPreferStrongThenScoreThenLexical(t *testing.T) {
 		a, b          int
 		target, class string
 	}{
-		{"qualifying vote wins", true, 3, 4, "client:acme", "strong"},
+		{"qualifying vote wins", true, 3, 4, "jcode@acme", "strong"},
 		{"highest score", false, 3, 4, "personal", "group-only"},
-		{"lexical tie", false, 3, 3, "client:acme", "group-only"},
+		{"lexical tie", false, 3, 3, "jcode@acme", "group-only"},
 		{"group outranks unsupported vote", true, 2, 4, "personal", "group-only"},
-		{"vote fallback", true, 2, 2, "client:acme", "vote-only"},
+		{"vote fallback", true, 2, 2, "jcode@acme", "vote-only"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := voteFixture()

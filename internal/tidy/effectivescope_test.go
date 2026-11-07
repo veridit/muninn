@@ -71,6 +71,9 @@ func TestReadGraphEffectiveSourceScopeAndNativeException(t *testing.T) {
 
 func TestEffectiveScopesRemovePhantomVotesAndGroupSignals(t *testing.T) {
 	g := voteFixture()
+	for i := 1; i <= 12; i++ {
+		g.Units[i].Scope = "client:acme:child"
+	}
 	// The apparent outsider is already recalled within acme's client boundary.
 	g.EffectiveScopes = map[int64]string{1: "client:acme"}
 	p, err := Scan(g, Defaults(), nil)
@@ -86,11 +89,11 @@ func TestEffectiveScopesRemovePhantomVotesAndGroupSignals(t *testing.T) {
 	g.EffectiveScopes = map[int64]string{}
 	for _, u := range g.Units {
 		if u.ID >= 2 && u.ID <= 13 {
-			g.EffectiveScopes[u.ID] = "client:garnet"
+			g.EffectiveScopes[u.ID] = "jcode@garnet:folder"
 		}
 	}
 	p, err = Scan(g, Defaults(), nil)
-	if err != nil || len(p.Entries) != 1 || p.Entries[0].Target != "client:garnet" || p.Entries[0].Strength != "strong" || p.Entries[0].Votes["client:garnet"] != 12 || p.Entries[0].Neighbors[0].Scope != "client:garnet" {
+	if err != nil || len(p.Entries) != 1 || p.Entries[0].Target != "jcode@garnet:folder" || p.Entries[0].Strength != "strong" || p.Entries[0].Votes["jcode@garnet"] != 12 || p.Entries[0].Neighbors[0].Scope != "jcode@garnet:folder" {
 		t.Fatalf("plan=%+v err=%v", p, err)
 	}
 	if p.Entries[0].Source != "global" || p.Entries[0].Fingerprint != Fingerprint(g.Units[0]) {
