@@ -131,6 +131,20 @@ func TestClassificationClassesAndReport(t *testing.T) {
 }
 
 func TestGroupOptionsValidation(t *testing.T) {
+	for _, floor := range []float64{math.NaN(), math.Inf(1), -.001, 1.001} {
+		o := Defaults()
+		o.GroupFloor = floor
+		if err := o.Validate(); err == nil || !strings.Contains(err.Error(), "--group-floor") {
+			t.Fatalf("accepted floor %v", floor)
+		}
+	}
+	for _, floor := range []float64{0, .0024, .005, .01, 1} {
+		o := Defaults()
+		o.GroupFloor = floor
+		if err := o.Validate(); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, value := range []float64{math.NaN(), math.Inf(1), -.1, 0, .5, 1.01} {
 		o := Defaults()
 		o.GroupPurity = value
