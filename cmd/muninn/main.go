@@ -228,16 +228,22 @@ func rememberCmd() *cobra.Command {
 	var inProject bool
 	c := &cobra.Command{Use: "remember <text>", Short: "Store a memory", Args: cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			if inProject {
-				p, err := project.Find(dirOr(""), true)
-				if err != nil {
-					return err
-				}
-				scope = p.Scope()
-			}
 			return withApp(func(ctx context.Context, a *app.App) error {
 				cwd, _ := os.Getwd()
 				b := a.Bound(home, cwd)
+				if inProject && scope == "" {
+					// A client root is that client's global, not a separate project.
+					if places := b.Places(); b.Client != "" && len(places) == 1 {
+						scope = places[0].Scope
+					} else {
+						p, err := project.Find(cwd, true)
+						if err != nil {
+							return err
+						}
+						scope = p.Scope()
+						b = b.Refresh(a)
+					}
+				}
 				u, reinforced, err := b.RememberPlaced(ctx, a, strings.Join(args, " "), category, scope, tags, safeReason, place, placeReason)
 				if err != nil {
 					return err

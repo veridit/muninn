@@ -2,9 +2,38 @@ package main
 
 import (
 	"github.com/veridit/muninn/internal/scopetest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestCLIProjectFlagAtClientRootAndPlainFolder(t *testing.T) {
+	f := scopetest.New(t)
+	f.Bind(t, "client")
+	root := filepath.Join(f.Root, "client")
+	t.Chdir(root)
+	out, err := cliSurface(t, rememberCmd(), "Synthetic client-root project flag rule.", "--project")
+	if err != nil || !strings.Contains(out, "place: here") {
+		t.Fatalf("root: %s %v", out, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".muninn", "project")); !os.IsNotExist(err) {
+		t.Fatal("client root acquired a phantom project identity", err)
+	}
+	f.Bind(t, "alpha")
+	plain := filepath.Join(f.Root, "synthetic-project-flag-folder")
+	if err := os.MkdirAll(plain, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(plain)
+	out, err = cliSurface(t, rememberCmd(), "Synthetic new project flag rule.", "--project")
+	if err != nil || !strings.Contains(out, "place: here") {
+		t.Fatalf("plain: %s %v", out, err)
+	}
+	if _, err := os.Stat(filepath.Join(plain, ".muninn", "project")); err != nil {
+		t.Fatal("explicit project flag did not create identity", err)
+	}
+}
 
 func TestCLIRememberPlaceAndQuestion(t *testing.T) {
 	f := scopetest.New(t)
