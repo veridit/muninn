@@ -11,6 +11,18 @@ import (
 
 var clientName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
+// SourceClient resolves a non-native source file's physical client provenance.
+// Resolve the file itself before its directory, including file symlinks, so
+// recall and owner-side analysis agree on the effective scope.
+func SourceClient(path string) (string, error) {
+	physical := path
+	if resolved, err := filepath.EvalSymlinks(physical); err == nil {
+		physical = resolved
+	}
+	client, _, err := ClientRoot(filepath.Dir(physical))
+	return client, err
+}
+
 // ClientRoot walks cwd's physical ancestors for the nearest .muninn/client.
 // The file holds one case-sensitive identifier, surrounded by optional whitespace.
 // A .muninn directory without a client file does not stop the walk. Invalid or

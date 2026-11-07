@@ -339,11 +339,7 @@ func (a *App) sourceClients() (map[int64]string, error) {
 		}
 		root, ok := a.sourceRoots[s.path]
 		if !ok {
-			physical := s.path
-			if resolved, e := filepath.EvalSymlinks(physical); e == nil {
-				physical = resolved
-			}
-			root.client, _, root.err = project.ClientRoot(filepath.Dir(physical))
+			root.client, root.err = project.SourceClient(s.path)
 			a.sourceRoots[s.path] = root
 		}
 		if root.err != nil {

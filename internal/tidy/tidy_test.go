@@ -201,11 +201,11 @@ func TestJudgeBatchesStrongFirstRedactsAndLimits(t *testing.T) {
 	c := extract.Defaults()
 	c.Provider = "ollama"
 	c.BaseURL = server.URL
-	p := Plan{Entries: []Entry{{SID: "vote", Source: "global", Strength: "vote-only", Text: secret}, {SID: "group", Source: "global", Strength: "group-only", Text: secret}, {SID: "strong", Source: "global", Strength: "strong", Text: secret}}}
+	p := Plan{Entries: []Entry{{SID: "vote", Source: "global", Strength: "vote-only", Text: secret}, {SID: "group", Source: "global", Strength: "group-only", Text: secret}, {SID: "strong", Source: "jcode@quartz:folder", EffectiveSource: "global", Strength: "strong", Text: secret}, {SID: "limited", Source: "global", Strength: "vote-only", Text: secret}}}
 	if err := Judge(context.Background(), &p, c, 3); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 1 || !reflect.DeepEqual(seen, []string{"strong", "group", "vote"}) || !p.Entries[0].Judged || p.Entries[2].Decision != "stay" {
+	if requests != 1 || !reflect.DeepEqual(seen, []string{"strong", "group", "vote"}) || !p.Entries[0].Judged || p.Entries[2].Decision != "stay" || p.Entries[3].Judged {
 		t.Fatalf("plan=%+v seen=%v", p, seen)
 	}
 	if err := Judge(context.Background(), &p, c, 0); err != nil || requests != 1 {

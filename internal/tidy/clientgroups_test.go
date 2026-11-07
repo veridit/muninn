@@ -156,6 +156,13 @@ func TestGroupOptionsValidation(t *testing.T) {
 	}
 }
 
+func TestGroupLabelFrequencyOrderAndLimit(t *testing.T) {
+	g := TopicGroup{Terms: map[string]int{"zebra": 9, "quartz": 5, "garnet": 5, "a": 1, "b": 1, "c": 1}}
+	if got := groupLabel(g); !reflect.DeepEqual(got, []string{"zebra", "garnet", "quartz", "a", "b"}) {
+		t.Fatal(got)
+	}
+}
+
 func TestReadTopicGroupsCanonicalMirrorsAndLabels(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "muninn.db")
 	db, err := store.Open(path)

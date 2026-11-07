@@ -56,6 +56,7 @@ type Neighbor struct {
 	Text  string  `json:"text"`
 }
 type Entry struct {
+	EffectiveSource    string              `json:"effective_source,omitempty"`
 	GroupScores        map[string]int      `json:"group_scores"`
 	OwnClientGroups    []ClientGroup       `json:"own_client_groups"`
 	TargetClientGroups []ClientGroup       `json:"target_client_groups"`
@@ -92,9 +93,10 @@ type Edge struct {
 	Sim      float64
 }
 type Graph struct {
-	Topics []TopicGroup
-	Units  []store.Unit
-	Edges  []Edge
+	EffectiveScopes map[int64]string
+	Topics          []TopicGroup
+	Units           []store.Unit
+	Edges           []Edge
 }
 
 // Fingerprint makes reviewed plans fail closed after content, metadata or scope changes.
@@ -158,6 +160,10 @@ func ReadGraph(ctx context.Context, path string) (Graph, error) {
 		bySID[u.SID] = u.ID
 		canonical[u.ID] = true
 	}
+	g.EffectiveScopes, err = readEffectiveScopes(ctx, tx, g.Units)
+	if err != nil {
+		return g, err
+	}
 	targets := map[int64]int64{}
 	rows, err = tx.QueryContext(ctx, `SELECT id,sid FROM units WHERE active=1`)
 	if err != nil {
@@ -219,7 +225,7 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 	edges := map[int64][]Edge{}
 	for _, u := range g.Units {
 		units[u.ID] = u
-		scopes[TopScope(u.Scope)] = true
+		scopes[TopScope(g.scopeFor(u))] = true
 	}
 	for s := range scopes {
 		p.Scopes = append(p.Scopes, s)
@@ -232,9 +238,13 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 	}
 	selectedGroups, groupScores := clientGroups(g, o)
 	p.ClientGroups = selectedGroups
-	anchors := DeriveAnchors(g.Units, roots)
+	effectiveUnits := append([]store.Unit(nil), g.Units...)
+	for i := range effectiveUnits {
+		effectiveUnits[i].Scope = g.scopeFor(effectiveUnits[i])
+	}
+	anchors := DeriveAnchors(effectiveUnits, roots)
 	for _, u := range g.Units {
-		own := TopScope(u.Scope)
+		own := TopScope(g.scopeFor(u))
 		votes := map[string]int{}
 		ns := edges[u.ID]
 		sort.Slice(ns, func(i, j int) bool {
@@ -244,6 +254,7 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 			return ns[i].Sim > ns[j].Sim
 		})
 		entry := Entry{SID: u.SID, Origin: u.Origin, Fingerprint: Fingerprint(u), Source: u.Scope, Text: redacted(u.Body), Votes: votes, Decision: "unsure", Reason: "unjudged proposal"}
+		entry.EffectiveSource = g.scopeFor(u)
 		seen := map[string]bool{u.SID: true}
 		for _, e := range ns {
 			v := units[e.To]
@@ -252,10 +263,10 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 			}
 			seen[v.SID] = true
 			if len(entry.Neighbors) < 5 {
-				entry.Neighbors = append(entry.Neighbors, Neighbor{v.SID, v.Scope, e.Sim, redacted(v.Body)})
+				entry.Neighbors = append(entry.Neighbors, Neighbor{v.SID, g.scopeFor(v), e.Sim, redacted(v.Body)})
 			}
 			if e.Sim >= o.MinSim {
-				votes[TopScope(v.Scope)]++
+				votes[TopScope(g.scopeFor(v))]++
 			}
 		}
 		voteTarget := ""
@@ -352,9 +363,9 @@ func (p Plan) Groups() []Group {
 	groups := map[string]*Group{}
 	var keys []string
 	for _, e := range p.Entries {
-		k := e.Source + "->" + e.Target
+		k := effectiveSource(e) + "->" + e.Target
 		if groups[k] == nil {
-			groups[k] = &Group{Source: e.Source, Target: e.Target, Decisions: map[string]int{}}
+			groups[k] = &Group{Source: effectiveSource(e), Target: e.Target, Decisions: map[string]int{}}
 			keys = append(keys, k)
 		}
 		g := groups[k]

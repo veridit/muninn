@@ -49,6 +49,14 @@ muninn tidy apply /path/to/plan.json --only 'global->client:example'
 
 Defaults are `--min-sim 0.70 --majority 10 --own-max 3`, plus
 `--group-purity 0.6666666666666666 --group-min 5 --group-score 3`.
+Top scope is computed from the **effective recall scope**, using the same
+physical-source client-root resolution as `Binding.ScopeFor`: a non-native
+source under a `.muninn/client` root belongs to that `client:<name>`, even if its
+stored label is `jcode@...:<folder>`. Native memories retain their stored scope.
+Invalid client markers fail the scan closed. A source file symlink is resolved
+before walking its physical ancestors. No move is proposed to the effective
+source's own top scope.
+
 Top scope is `client:<name>` with child scopes dropped, otherwise the part before
 the first colon (including `project` for `project:<id>`). Active canonical memory
 identities are counted once, not once per mirror. For each topic group, tidy
@@ -71,11 +79,15 @@ Plans and Markdown include each scope's top five client groups by member count
 as its signature, class counts, and source-to-target counts per class. Only explicit
 `move` decisions apply. The optional judge receives redacted memory text, five
 nearest neighbors, matched anchors, group scores, and up to five client-group
-labels each for the current and proposed scopes, clearly marked heuristic evidence.
+labels each for the effective current and proposed scopes, clearly marked heuristic evidence.
 Batches of five run strong first, then group-only, then vote-only. The default
 limit is 100, invalid answers become `unsure`. Scan writes only private plan and
 summary files (0600), normally under the data directory's `tidy/`, and never
-refreshes the index or writes to the memory store.
+refreshes the index or writes to the memory store. JSON `source` and fingerprints
+retain the stored scope for stale-plan checks and apply/undo; `effective_source`
+records recall's view. Report groupings and class transitions use effective
+scopes. An apply `--only` filter still uses the exact stored `source->target`
+values from the JSON.
 
 Before applying, stop other manual memory writers. Apply blocks capture with its
 lease, rejects stale reviewed entries, backs up `memories.json`, saves recovery

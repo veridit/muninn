@@ -124,7 +124,7 @@ func clientGroups(g Graph, o Options) ([]ClientGroup, map[int64]map[string]int) 
 	scopeByID := map[int64]string{}
 	sizes := map[string]int{}
 	for _, u := range g.Units {
-		s := TopScope(u.Scope)
+		s := TopScope(g.scopeFor(u))
 		scopeByID[u.ID] = s
 		sizes[s]++
 	}
@@ -221,7 +221,7 @@ type ClassTransition struct {
 func (p Plan) ClassTransitions() []ClassTransition {
 	counts := map[[3]string]int{}
 	for _, e := range p.Entries {
-		counts[[3]string{TopScope(e.Source), e.Target, e.Strength}]++
+		counts[[3]string{TopScope(effectiveSource(e)), e.Target, e.Strength}]++
 	}
 	out := []ClassTransition{}
 	for key, n := range counts {

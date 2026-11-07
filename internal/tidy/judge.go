@@ -46,9 +46,9 @@ func ParseVerdicts(raw string, entries []Entry, scopes []string) []Verdict {
 		valid := strict && v.Reason != "" && len(v.Reason) <= 1024 && !strings.ContainsAny(v.Reason, "\r\n\x00") && !project.LooksSecret(v.Reason)
 		switch v.Decision {
 		case "move":
-			valid = valid && allowed[v.Target] && v.Target != entries[i].Source
+			valid = valid && allowed[v.Target] && v.Target != entries[i].Source && TopScope(v.Target) != TopScope(effectiveSource(entries[i]))
 		case "stay", "unsure":
-			valid = valid && (v.Target == "" || v.Target == entries[i].Source)
+			valid = valid && (v.Target == "" || v.Target == entries[i].Source || v.Target == effectiveSource(entries[i]))
 		default:
 			valid = false
 		}
@@ -140,7 +140,7 @@ func Judge(ctx context.Context, p *Plan, c extract.Config, maxJudge int) error {
 		}
 		payload := make([]judgeEntry, 0, len(batch))
 		for _, e := range batch {
-			payload = append(payload, judgeEntry{e.OwnClientGroups, e.TargetClientGroups, e.GroupScores, e.SID, e.Text, e.Source, e.Target, e.Neighbors, e.AnchorScopes})
+			payload = append(payload, judgeEntry{e.OwnClientGroups, e.TargetClientGroups, e.GroupScores, e.SID, e.Text, effectiveSource(e), e.Target, e.Neighbors, e.AnchorScopes})
 		}
 		input, _ := json.Marshal(struct {
 			Scopes  []string     `json:"scopes"`
