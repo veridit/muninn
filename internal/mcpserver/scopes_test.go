@@ -84,7 +84,7 @@ func TestScopeMatrixMCP(t *testing.T) {
 				t.Fatal(err)
 			}
 			u, err := f.App.DB.Resolve(remembered.ID)
-			if err != nil || u.Scope != b.DefaultScope {
+			if err != nil || u.Scope != b.Places()[0].Scope {
 				t.Fatalf("default: %+v %v", u, err)
 			}
 			for _, scope := range []string{"jcode@beta", "client:other"} {

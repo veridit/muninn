@@ -59,7 +59,11 @@
     <textarea id="mtext" rows="3" style="width:100%" placeholder="A durable fact, preference or correction. Never secrets."></textarea>
     <div class="row">
       <select id="mcat"><option>fact</option><option>preference</option><option>correction</option><option>entity</option></select>
-      <input id="mscope" placeholder="scope (bound instance)">
+      <label>Would this still be true and useful in a different project? When unsure, choose here.</label>
+      <select id="mplace"><option value="here">here</option></select>
+      <input id="mscope" placeholder="literal scope (optional override)">
+      <input id="mreason" placeholder="place reason, if asked">
+      <input id="msafe" placeholder="safe reason, if asked">
       <input id="mtags" placeholder="tags, comma separated" style="flex:1">
       <button class="primary" id="mgo">Remember</button>
     </div>
@@ -111,12 +115,22 @@ $('#rgo').onclick = async () => {
   $('#rout').textContent = d.block || `(nothing passed the threshold, ${d.elapsed})`;
 };
 $('#rq').onkeydown = e => { if (e.key === 'Enter') $('#rgo').click(); };
+async function loadPlaces() {
+ const places = await api('/api/places');
+ $('#mplace').replaceChildren(...places.map(p => { const option = document.createElement('option'); option.value = p.name; option.textContent = `${p.name}: ${p.meaning}`; return option; }));
+}
+loadPlaces();
 $('#mgo').onclick = async () => {
+ try {
   const body = {content: $('#mtext').value, category: $('#mcat').value, scope: $('#mscope').value,
+    place: $('#mplace').value, place_reason: $('#mreason').value, safe_reason: $('#msafe').value,
     tags: $('#mtags').value.split(',').map(s => s.trim()).filter(Boolean)};
   const d = await api('/api/remember', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-  $('#mout').textContent = d.reinforced ? `reinforced ${d.id}` : `remembered ${d.id}`;
+  $('#mout').textContent = `${d.reinforced ? 'reinforced' : 'remembered'} ${d.id}, place: ${d.place}; available: ${d.places.map(p => p.name).join(', ')}`;
   $('#mtext').value = '';
+  $('#mreason').value = '';
+  $('#msafe').value = '';
+ } catch (error) { $('#mout').textContent = error.message; }
 };
 async function loadLog() {
   const d = await api('/api/injections');

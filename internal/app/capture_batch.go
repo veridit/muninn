@@ -53,6 +53,17 @@ func (c *captureBatch) exact(b Binding, a *App, candidate extract.Candidate) (Ca
 }
 func (c *captureBatch) apply(ctx context.Context, b Binding, a *App, scope string, action *CaptureAction, receipt string) error {
 	b = b.Refresh(a)
+	// A retried model may pick a different place. The persisted receipt owns the
+	// original destination and supersede intent, just as it owns the content.
+	for _, m := range c.mems {
+		if m.Origin == action.Origin && slices.Contains(m.CaptureEvents, receipt) {
+			scope = m.Scope
+			action.Scope = scope
+			action.Place = b.PlaceForScope(scope).Name
+			action.PlaceHint = b.PlacementHint(action.Content, scope)
+			break
+		}
+	}
 	if _, err := b.WriteScope(scope); err != nil {
 		return err
 	}

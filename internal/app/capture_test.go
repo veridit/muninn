@@ -117,7 +117,11 @@ func TestCaptureSupersedeTrustVisibility(t *testing.T) {
 			for _, v := range mems {
 				if v.Content == "Use the revised quartz protocol." {
 					found = true
-					if v.Scope != "jcode@alpha" || v.Trust != tc.trust || !strings.HasPrefix(v.Origin, "capture:stdin:"+tc.name+":") {
+					wantScope := b.Places()[0].Scope
+					if tc.want == "supersede" {
+						wantScope = old.Scope
+					}
+					if v.Scope != wantScope || v.Trust != tc.trust || !strings.HasPrefix(v.Origin, "capture:stdin:"+tc.name+":") {
 						t.Fatal("metadata lost")
 					}
 				}
@@ -155,7 +159,7 @@ func TestCaptureClientRootBoundAndSecretDropped(t *testing.T) {
 		}
 		if v.Content == "Client quartz policy remains isolated." {
 			found = true
-			if v.Scope != "client:acme" {
+			if v.Scope != b.Places()[0].Scope {
 				t.Fatal(v.Scope)
 			}
 		}

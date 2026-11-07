@@ -24,11 +24,13 @@ type CaptureOptions struct {
 }
 type CaptureAction struct {
 	extract.Candidate
-	Action string  `json:"action"`
-	Reason string  `json:"reason"`
-	Score  float64 `json:"cosine,omitempty"`
-	Target string  `json:"target,omitempty"`
-	Origin string  `json:"origin"`
+	Scope     string  `json:"scope,omitempty"`
+	PlaceHint string  `json:"place_hint,omitempty"`
+	Action    string  `json:"action"`
+	Reason    string  `json:"reason"`
+	Score     float64 `json:"cosine,omitempty"`
+	Target    string  `json:"target,omitempty"`
+	Origin    string  `json:"origin"`
 }
 type CaptureReport struct {
 	CaptureTimings
@@ -78,6 +80,8 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 	} else {
 		b = b.Refresh(a)
 	}
+	// Keep the session/checkpoint binding stable across the placement rollout.
+	// Each new action chooses its own scope below, not this legacy top-level key.
 	scope, err := b.WriteScope("")
 	audit.Scope = scope
 	if err != nil {
@@ -334,7 +338,7 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 				providerCtx, callCancel = context.WithTimeout(providerCtx, 20*time.Second)
 			}
 			extractStart := time.Now()
-			result, err = extract.Run(providerCtx, callCfg, text, known)
+			result, err = extract.Run(providerCtx, callCfg, text, known, b.extractionPlaces()...)
 			report.ExtractMS += time.Since(extractStart).Milliseconds()
 			callCancel()
 			providerCancel()
@@ -367,8 +371,14 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 		}
 		local := map[string]bool{}
 		for n, c := range result.Candidates {
+			destination, err := b.Placement("", c.Place)
+			if err != nil {
+				return report, err
+			}
+			c.Place = destination.Name
+			c.PlaceReason = strings.TrimSpace(c.PlaceReason)
 			if local[c.Content] {
-				report.Actions = append(report.Actions, CaptureAction{Candidate: c, Action: "skip", Reason: "duplicate proposal in batch"})
+				report.Actions = append(report.Actions, CaptureAction{Candidate: c, Scope: destination.Scope, PlaceHint: b.PlacementHint(c.Content, destination.Scope), Action: "skip", Reason: "duplicate proposal in batch"})
 				continue
 			}
 			local[c.Content] = true
@@ -384,7 +394,6 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 					found = true
 				}
 			}
-			var err error
 			if !found || (c.Supersedes != "" && c.Trust == "high") {
 				action, err = b.capturePlan(ctx, a, c)
 			}
@@ -392,12 +401,25 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 			if err != nil {
 				return report, err
 			}
+			action.Scope = destination.Scope
+			// Exact reinforcement and correction retain the existing target's place.
+			if action.Target != "" && (action.Action == "reinforce" || action.Action == "supersede") {
+				if i, ok := writes.bySID[action.Target]; ok {
+					action.Scope = writes.mems[i].Scope
+				} else if target, err := b.Resolve(a, action.Target); err == nil {
+					action.Scope = target.Scope
+				} else {
+					return report, err
+				}
+				action.Place = b.PlaceForScope(action.Scope).Name
+			}
+			action.PlaceHint = b.PlacementHint(action.Content, action.Scope)
 			action.Origin = fmt.Sprintf("capture:%s:%s:%s:%d", o.Harness, o.Session, batch[:12], n)
 			// Include the binding/home in receipts even when harness ids collide.
 			receipt := captureHash(session + "\x00" + batch + "\x00" + c.Content)
 			if !o.DryRun {
 				applyStart = time.Now()
-				err := writes.apply(ctx, b, a, scope, &action, receipt)
+				err := writes.apply(ctx, b, a, action.Scope, &action, receipt)
 				report.ApplyMS += time.Since(applyStart).Milliseconds()
 				if err != nil {
 					return report, err

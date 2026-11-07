@@ -145,9 +145,9 @@ func captureCmd() *cobra.Command {
 			}
 			if dry {
 				w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-				fmt.Fprintln(w, "CATEGORY\tTRUST\tACTION\tCONTENT")
+				fmt.Fprintln(w, "CATEGORY\tTRUST\tACTION\tPLACE\tPLACE REASON\tCONTENT")
 				for _, v := range r.Actions {
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", v.Category, v.Trust, v.Action, strings.ReplaceAll(v.Content, "\t", " "))
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", v.Category, v.Trust, v.Action, v.Place, strings.ReplaceAll(v.PlaceReason, "\t", " "), strings.ReplaceAll(v.Content, "\t", " "))
 				}
 				w.Flush()
 			}

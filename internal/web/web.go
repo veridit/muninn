@@ -126,11 +126,16 @@ func (s *Server) Handler() http.Handler {
 		}
 		writeJSON(w, resp)
 	})
+	mux.HandleFunc("GET /api/places", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, b.Refresh(s.App).Places()) })
 	mux.HandleFunc("POST /api/remember", func(w http.ResponseWriter, r *http.Request) {
 		b := b.Refresh(s.App)
 		var in struct {
-			Content, Category, Scope, SafeReason string
-			Tags                                 []string
+			Content, Category, Scope string
+			SafeReason               string `json:"safe_reason"`
+			LegacySafeReason         string `json:"SafeReason"`
+			Place                    string `json:"place"`
+			PlaceReason              string `json:"place_reason"`
+			Tags                     []string
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			fail(w, 400, err)
@@ -138,12 +143,15 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.Mu.Lock()
 		defer s.Mu.Unlock()
-		u, re, err := b.RememberSafe(r.Context(), s.App, in.Content, in.Category, in.Scope, in.Tags, in.SafeReason)
+		if in.SafeReason == "" {
+			in.SafeReason = in.LegacySafeReason
+		}
+		u, re, err := b.RememberPlaced(r.Context(), s.App, in.Content, in.Category, in.Scope, in.Tags, in.SafeReason, in.Place, in.PlaceReason)
 		if err != nil {
 			fail(w, 400, err)
 			return
 		}
-		writeJSON(w, map[string]any{"id": u.SID, "reinforced": re})
+		writeJSON(w, map[string]any{"id": u.SID, "reinforced": re, "place": b.PlaceForScope(u.Scope).Name, "places": b.Places()})
 	})
 	mux.HandleFunc("POST /api/forget", func(w http.ResponseWriter, r *http.Request) {
 		b := b.Refresh(s.App)

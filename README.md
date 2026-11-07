@@ -239,6 +239,47 @@ the same client/instance binding as recall. `--dry-run` shows proposed actions
 without saving. Lifecycle hooks are opt-in and are not installed automatically.
 See [capture configuration, privacy and hook wiring](docs/CAPTURE.md).
 
+## Where new memories go
+
+New memories default to **here**, the session's project or folder, rather than
+its instance-wide bucket. Capture asks its extraction model the same question
+agents should ask before `remember`: **Would this still be true and useful in a
+different project?**
+
+- **here**: this code, repository, paths, tickets or deployment. Also the default
+  when unsure. Git projects use their stable project identity. Plain folders
+  stay folder-local, and bindings that write instance-local folder stores keep
+  using those stores.
+- **client**: facts shared across this client's projects, such as its servers,
+  people and processes. Available only inside a client root.
+- **global**: the user, their preferences and tools across their work. Inside a
+  client root this means **that client only**, never the user's personal global.
+
+Destinations with the same scope collapse: at a client root there is just
+`here`, and a client project's `client` and `global` are the same destination.
+The remember reply lists the place used and the available places. Capture exact duplicates are reinforced where they already live, and corrections
+retain their target's scope instead of moving it.
+
+```sh
+muninn remember "This repository's release checklist is in docs/release.md"
+muninn remember --place global "I prefer concise explanations"
+muninn remember --place client "This client schedules releases on Tuesdays"
+```
+
+MCP `memory_remember` and web `/api/remember` accept `place` with the same names.
+The CLI has `--place`; `--project` remains supported. An explicit literal `scope`
+(CLI `--scope`) takes precedence, but cannot bypass a client boundary or the
+binding's existing write policy.
+
+A cheap project-name/path check may ask before a client/global write: "Are you
+sure it applies beyond it?" Nothing is stored until the writer chooses `here` or
+calls again with `place_reason` (CLI `--place-reason`) explaining why it belongs
+beyond this project. This is a question, not an automatic classifier. The secret
+check still independently requires `safe_reason` when appropriate. Capture cannot
+ask a person, so it records the model's `place`, `place_reason`, concrete scope
+and any project-mention hint in its audit. `capture --dry-run --json` shows the
+same proposed placement without saving memories or advancing capture checkpoints.
+
 ## Use
 
 ```sh

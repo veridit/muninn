@@ -223,7 +223,7 @@ func ensureFresh(ctx context.Context, a *app.App) (index.Stats, error) {
 }
 
 func rememberCmd() *cobra.Command {
-	var category, scope, home, safeReason string
+	var category, scope, home, safeReason, place, placeReason string
 	var tags []string
 	var inProject bool
 	c := &cobra.Command{Use: "remember <text>", Short: "Store a memory", Args: cobra.MinimumNArgs(1),
@@ -237,20 +237,26 @@ func rememberCmd() *cobra.Command {
 			}
 			return withApp(func(ctx context.Context, a *app.App) error {
 				cwd, _ := os.Getwd()
-				u, reinforced, err := a.Bound(home, cwd).RememberSafe(ctx, a, strings.Join(args, " "), category, scope, tags, safeReason)
+				b := a.Bound(home, cwd)
+				u, reinforced, err := b.RememberPlaced(ctx, a, strings.Join(args, " "), category, scope, tags, safeReason, place, placeReason)
 				if err != nil {
 					return err
 				}
 				if reinforced {
-					fmt.Printf("reinforced %s\n", u.SID)
+					fmt.Printf("reinforced %s (place: %s)\n", u.SID, b.PlaceForScope(u.Scope).Name)
 				} else {
-					fmt.Println("remembered", u.SID)
+					fmt.Printf("remembered %s (place: %s)\n", u.SID, b.PlaceForScope(u.Scope).Name)
+				}
+				for _, p := range b.Places() {
+					fmt.Printf("available: %s (%s)\n", p.Name, p.Meaning)
 				}
 				return nil
 			})
 		}}
 	c.Flags().StringVar(&category, "category", "fact", "fact | preference | correction | entity")
-	c.Flags().StringVar(&scope, "scope", "", "memory scope (default: bound instance)")
+	c.Flags().StringVar(&scope, "scope", "", "literal memory scope (overrides --place)")
+	c.Flags().StringVar(&place, "place", "", "here (default), client, or global; when unsure choose here")
+	c.Flags().StringVar(&placeReason, "place-reason", "", "why this applies beyond this project, when the project-mention check asks")
 	c.Flags().StringVar(&home, "jcode-home", "", "bind to this JCODE_HOME")
 	c.Flags().StringSliceVar(&tags, "tag", nil, "tag (repeatable)")
 	c.Flags().StringVar(&safeReason, "safe-reason", "", "why text that looks secret is safe to store (asked for when the secret check fires)")

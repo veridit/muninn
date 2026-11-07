@@ -141,8 +141,8 @@ func TestScopeMatrixCLIAndHooks(t *testing.T) {
 			var scope string
 			res.Scan(&scope)
 			res.Close()
-			if scope != b.DefaultScope {
-				t.Fatalf("default scope %q want %q", scope, b.DefaultScope)
+			if scope != b.Places()[0].Scope {
+				t.Fatalf("default scope %q want %q", scope, b.Places()[0].Scope)
 			}
 			for _, scope := range []string{"jcode@beta", "client:other"} {
 				out, err = cliSurface(t, rememberCmd(), "must not be stored", "--scope", scope)

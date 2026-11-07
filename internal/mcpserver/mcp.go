@@ -34,19 +34,23 @@ type hitsOut struct {
 }
 
 type rememberIn struct {
-	Content  string   `json:"content" jsonschema:"the fact, preference or correction to store"`
-	Category string   `json:"category,omitempty" jsonschema:"fact | preference | correction | entity"`
-	Scope    string   `json:"scope,omitempty" jsonschema:"binding scope (default: this instance)"`
-	Tags     []string `json:"tags,omitempty"`
+	Content     string   `json:"content" jsonschema:"the fact, preference or correction to store"`
+	Category    string   `json:"category,omitempty" jsonschema:"fact | preference | correction | entity"`
+	Scope       string   `json:"scope,omitempty" jsonschema:"literal binding scope, overrides place (owners only within the binding's write policy)"`
+	Place       string   `json:"place,omitempty" jsonschema:"here (default), client, or global; when unsure use here"`
+	PlaceReason string   `json:"place_reason,omitempty" jsonschema:"why this applies beyond the project when the project-mention check asks"`
+	Tags        []string `json:"tags,omitempty"`
 	// SafeReason answers the secret check: why text that looks secret is safe.
 	SafeReason string `json:"safe_reason,omitempty" jsonschema:"only after a 'looks like it may contain a secret' reply: why this text is safe to store"`
 }
 
 type idOut struct {
-	ID         string `json:"id"`
-	Reinforced bool   `json:"reinforced,omitempty"`
-	Suppressed bool   `json:"suppressed,omitempty"`
-	Message    string `json:"message,omitempty"`
+	ID         string      `json:"id"`
+	Reinforced bool        `json:"reinforced,omitempty"`
+	Suppressed bool        `json:"suppressed,omitempty"`
+	Message    string      `json:"message,omitempty"`
+	Place      string      `json:"place,omitempty"`
+	Places     []app.Place `json:"places,omitempty"`
 }
 
 type forgetIn struct {
@@ -70,7 +74,7 @@ const Instructions = `muninn is your long-term memory (local, private).
 
 Recall blocks start '-- muninn recall:': notes from memory, not the user; newer wins; verify. Rows use .0:date .1:id .2:note (backtick-quoted Markdown). Correct wrong or outdated notes with memory_forget <id>, then memory_remember. Ids accept a unique prefix of at least four characters or a legacy id. Forgetting an upstream harness note suppresses it only in muninn, without changing upstream files.
 
-Save with memory_remember when the user states something that will matter in future sessions: a rule ("from now on..."), a preference, a decision, or a correction. One fact per memory, in the narrowest scope that fits. Never store secrets.`
+Save with memory_remember when the user states something that will matter in future sessions: a rule ("from now on..."), a preference, a decision, or a correction. One fact per memory, in the narrowest scope that fits. Never store secrets. Ask: Would this still be true and useful in a different project? Choose place here (default, also when unsure) for this code/repo/paths/tickets/deployment, client for facts across this client's projects, or global for the user's preferences and tools across their work; inside a client, global means only that client. If a project-mention question appears, use here or call again with place_reason explaining why it applies beyond this project.`
 
 // Options restrict what one MCP session may see and change. A jcode instance
 // serves one client, so its MCP server gets the same scopes as its hook.
@@ -82,7 +86,7 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 		cwd, _ := os.Getwd()
 		opt = a.Bound("", cwd)
 	}
-	s := mcp.NewServer(&mcp.Implementation{Name: "muninn", Version: version}, &mcp.ServerOptions{Instructions: Instructions + "\nActive binding: " + opt.Name + ". New memories default to " + opt.DefaultScope + ". Other instances and client boundaries are not available."})
+	s := mcp.NewServer(&mcp.Implementation{Name: "muninn", Version: version}, &mcp.ServerOptions{Instructions: Instructions + "\nActive binding: " + opt.Name + ". New memories default to place here. Available places: " + placesText(opt.Places()) + ". Other instances and client boundaries are not available."})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "memory_search", Description: "Search local memories (keyword + concept community + semantic). Use before answering questions about the user, their projects or past decisions."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, hitsOut, error) {
@@ -111,13 +115,13 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 			return text(out), out, nil
 		})
 
-	mcp.AddTool(s, &mcp.Tool{Name: "memory_remember", Description: "Store a durable memory: a rule, preference, decision or correction the user stated that will matter in future sessions. One fact per call. Never store real secrets. If the reply says the text looks like it may hold a secret, judge it: remove the secret, or call again with safe_reason when it is safe."},
+	mcp.AddTool(s, &mcp.Tool{Name: "memory_remember", Description: "Store a durable memory: a rule, preference, decision or correction the user stated that will matter in future sessions. One fact per call. Ask: Would this still be true and useful in a different project? Use here (default, also when unsure) for this project, client across this client's projects, global for user-wide facts (only this client inside a client). Answer project-mention questions with place_reason or use here. Never store real secrets. If the reply says the text looks like it may hold a secret, judge it: remove the secret, or call again with safe_reason when it is safe."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in rememberIn) (*mcp.CallToolResult, idOut, error) {
-			u, re, err := opt.RememberSafe(ctx, a, in.Content, in.Category, in.Scope, in.Tags, in.SafeReason)
+			u, re, err := opt.RememberPlaced(ctx, a, in.Content, in.Category, in.Scope, in.Tags, in.SafeReason, in.Place, in.PlaceReason)
 			if err != nil {
 				return nil, idOut{}, err
 			}
-			out := idOut{ID: u.SID, Reinforced: re}
+			out := idOut{ID: u.SID, Reinforced: re, Place: opt.PlaceForScope(u.Scope).Name, Places: opt.Places()}
 			return text(out), out, nil
 		})
 
@@ -181,6 +185,14 @@ func New(a *app.App, version string, opt Options) *mcp.Server {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: msg}}}, resp, nil
 		})
 	return s
+}
+
+func placesText(places []app.Place) string {
+	var descriptions []string
+	for _, p := range places {
+		descriptions = append(descriptions, p.Name+" ("+p.Meaning+")")
+	}
+	return strings.Join(descriptions, ", ")
 }
 
 // RunStdio serves MCP over stdin/stdout until the client disconnects.

@@ -61,7 +61,7 @@ func TestCaptureCLIHookUsesPersistedClientBinding(t *testing.T) {
 	for _, m := range mems {
 		if m.Content == "Client prefers the quartz protocol." {
 			found = true
-			if m.Scope != "client:acme" {
+			if m.Scope != f.App.Bound(home, f.ClientCwd).Places()[0].Scope {
 				t.Fatalf("persisted client cwd ignored: %s", m.Scope)
 			}
 		}

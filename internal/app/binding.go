@@ -468,6 +468,12 @@ func (e *SecretCheckError) Error() string {
 // RememberSafe stores a memory. When the cheap secret check fires, the write
 // needs safeReason: the writer's judgment that the text is safe to keep.
 func (b Binding) RememberSafe(ctx context.Context, a *App, content, category, scope string, tags []string, safeReason string) (store.Unit, bool, error) {
+	return b.RememberPlaced(ctx, a, content, category, scope, tags, safeReason, "", "")
+}
+
+// RememberPlaced accepts a session-relative place alongside an optional literal
+// scope. Both advisory checks ask the writer, never silently reclassify text.
+func (b Binding) RememberPlaced(ctx context.Context, a *App, content, category, scope string, tags []string, safeReason, place, placeReason string) (store.Unit, bool, error) {
 	b = b.Refresh(a)
 	safeReason = strings.TrimSpace(safeReason)
 	if hint := project.SecretHint(content); hint != "" && safeReason == "" {
@@ -475,9 +481,13 @@ func (b Binding) RememberSafe(ctx context.Context, a *App, content, category, sc
 	} else if hint == "" {
 		safeReason = ""
 	}
-	scope, err := b.WriteScope(scope)
+	destination, err := b.Placement(scope, place)
 	if err != nil {
 		return store.Unit{}, false, err
+	}
+	scope = destination.Scope
+	if hint := b.PlacementHint(content, scope); hint != "" && strings.TrimSpace(placeReason) == "" {
+		return store.Unit{}, false, &PlaceCheckError{Hint: hint}
 	}
 	if category == "" {
 		category = "fact"
