@@ -71,13 +71,30 @@ func (b Binding) Refresh(a *App) Binding {
 }
 
 func (a *App) bound(jcodeHome, cwd string) Binding {
-	client, _, markerErr := project.ClientRoot(cwd)
+	client, clientRoot, markerErr := project.ClientRoot(cwd)
 	if markerErr != nil {
 		return Binding{Name: "client (invalid marker)", Err: markerErr, Scopes: []string{"!*"}, writeScopes: []string{"!*"}}
 	}
 	if client != "" {
 		scope := "client:" + client
-		return Binding{Name: scope, Client: client, DefaultScope: scope, Scopes: []string{scope, scope + ":*"}, writeScopes: []string{scope, scope + ":*"}}
+		rules := []string{scope}
+		physical, err := placementDir(cwd)
+		if err != nil {
+			return Binding{Name: scope, Client: client, Err: err, Scopes: []string{"!*"}, writeScopes: []string{"!*"}}
+		}
+		// A client's root is its global, not a project. Other sessions see only
+		// that top level, their own project, and folder scopes that own their cwd.
+		if physical != clientRoot {
+			if p, err := project.Find(physical, false); err == nil && p.Root != clientRoot && FolderOwns(p.Root, physical) {
+				rules = append(rules, p.Scope())
+			}
+			for dir := physical; dir != clientRoot && filepath.Dir(dir) != dir; dir = filepath.Dir(dir) {
+				if FolderOwns(dir, physical) {
+					rules = append(rules, scope+":folder:"+dir)
+				}
+			}
+		}
+		return Binding{Name: scope, Client: client, DefaultScope: scope, Scopes: rules, writeScopes: append([]string(nil), rules...)}
 	}
 	if jcodeHome == "" {
 		jcodeHome = os.Getenv("JCODE_HOME")

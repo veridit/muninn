@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,29 @@ type Place struct {
 	Meaning string `json:"meaning"`
 }
 
+// placementDir resolves the longest existing ancestor, including a future
+// session directory beneath a symlink into a client root.
+func placementDir(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	var tail []string
+	for d := abs; ; d = filepath.Dir(d) {
+		physical, err := filepath.EvalSymlinks(d)
+		if err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				physical = filepath.Join(physical, tail[i])
+			}
+			return physical, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) || filepath.Dir(d) == d {
+			return "", err
+		}
+		tail = append(tail, filepath.Base(d))
+	}
+}
+
 // placementScopes derives the three aliases before duplicate destinations collapse.
 // It never creates a project marker or modifies a harness store.
 func (b Binding) placementScopes() (here, client, global string) {
@@ -35,12 +59,9 @@ func (b Binding) placementScopes() (here, client, global string) {
 	if b.context == nil || b.context.cwd == "" {
 		return
 	}
-	cwd, err := filepath.Abs(b.context.cwd)
+	cwd, err := placementDir(b.context.cwd)
 	if err != nil {
 		return
-	}
-	if phys, err := filepath.EvalSymlinks(cwd); err == nil {
-		cwd = phys
 	}
 	if b.Client != "" {
 		_, root, err := project.ClientRoot(cwd)
@@ -50,7 +71,7 @@ func (b Binding) placementScopes() (here, client, global string) {
 		if p, err := project.Find(cwd, false); err == nil && p.Root != root && FolderOwns(p.Root, cwd) {
 			here = p.Scope()
 		} else {
-			here = client + ":folder-" + harness.JcodeProjectHash(cwd)
+			here = client + ":folder:" + cwd
 		}
 		return
 	}

@@ -53,7 +53,7 @@ func New(t *testing.T) *Fixture {
 	if err := os.WriteFile(filepath.Join(f.Cwd, ".muninn", "project"), []byte("matrix-project\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, d := range []string{f.ClientCwd, filepath.Join(root, "client", ".muninn")} {
+	for _, d := range []string{filepath.Join(f.ClientCwd, ".muninn"), filepath.Join(root, "client", ".muninn")} {
 		if err := os.MkdirAll(d, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +61,7 @@ func New(t *testing.T) *Fixture {
 	if err := os.WriteFile(filepath.Join(root, "client", ".muninn", "client"), []byte("acme\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "client", ".muninn", "project"), []byte("client-project\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(f.ClientCwd, ".muninn", "project"), []byte("client-project\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var mems []ingest.NativeMemory

@@ -257,7 +257,8 @@ different project?**
 
 Destinations with the same scope collapse: at a client root there is just
 `here`, and a client project's `client` and `global` are the same destination.
-The remember reply lists the place used and the available places. Capture exact duplicates are reinforced where they already live, and corrections
+The remember reply lists the place used and the available places. Capture exact
+duplicates are reinforced where they already live, and corrections
 retain their target's scope instead of moving it.
 
 ```sh
@@ -360,7 +361,8 @@ muninn indexes each one separately and keeps them apart:
   `jcode@<instance>:<project>`.
 - Every surface uses the same binding: hooks, shell CLI, MCP, TUI and web.
   A non-global instance sees its own scopes, shared `global`, and the current
-  project's scope. New memories default to `jcode@<instance>`. Another
+  project's scope. New memories default to `here`, this project or folder, with
+  `--place global` selecting `jcode@<instance>`. Another
   instance's memories cannot be shown, related, forgotten or overwritten.
 - Without `JCODE_HOME`, or with the default `~/.jcode`, the binding is global:
   personal, named and `engram:*` memories remain visible, but every known
@@ -406,11 +408,15 @@ ordinary `.muninn/` holding only `project` or `memories.jsonl` does not stop
 the walk. Empty, invalid or unreadable markers produce a lint-style error
 and fail closed: no memory reads or writes, not a fallback to global.
 
-The marker wins over `JCODE_HOME` and `--jcode-home`. Within `acme`, reads
-are strictly `client:acme` and `client:acme:*`, with no shared global,
-personal or jcode memories. Writes default to `client:acme` and other
-clients or personal scopes are refused. Project notes beneath that root use
-`client:acme:<project-id>`. Every other binding excludes `client:*`.
+The marker wins over `JCODE_HOME` and `--jcode-home`. Within `acme`, a session
+sees `client:acme` plus its own project scope and folder scopes that own its
+working directory, never sibling projects or folders. A session at the client
+root sees only `client:acme`. There are no shared user-global, personal or jcode
+memories. Writes follow the same policy and default to `here`: the project's
+`client:acme:<project-id>` or a plain folder's readable
+`client:acme:folder:<absolute-path>`. No project marker is created for placement.
+`--place client` and `--place global` both mean `client:acme`, never personal
+global. Every other binding excludes `client:*`.
 Neither `--all` nor `--scope` can cross a client-root boundary, including in
 TUI and web views. Imports and project sync respect the write boundary.
 

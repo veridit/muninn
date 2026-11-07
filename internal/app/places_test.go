@@ -24,7 +24,7 @@ func makePlacementRepo(t *testing.T, root string) project.Project {
 	if err := os.MkdirAll(root, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-q", "--allow-empty", "-m", "synthetic root"}} {
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit", "-q", "--allow-empty", "-m", "synthetic root " + filepath.Base(root)}} {
 		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
 			t.Fatalf("git: %s %v", out, err)
 		}
@@ -102,6 +102,87 @@ func TestPlacesSessionInventory(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, ".muninn", "project")); !os.IsNotExist(err) {
 			t.Fatal("placement created a marker", err)
 		}
+	}
+}
+
+func TestClientPlacesDoNotLeakSiblingMemories(t *testing.T) {
+	f := scopetest.New(t)
+	root := filepath.Join(f.Root, "client")
+	pA := makePlacementRepo(t, filepath.Join(root, "synthetic-project-a"))
+	pB := makePlacementRepo(t, filepath.Join(root, "synthetic-project-b"))
+	if pA.Scope() == pB.Scope() {
+		t.Fatal("synthetic projects must have distinct identities")
+	}
+	folder := filepath.Join(root, "synthetic-folder")
+	if err := os.MkdirAll(folder, 0700); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(f.Root, "alpha", ".jcode")
+	a := f.App.Bound(home, pA.Root)
+	b := f.App.Bound(home, pB.Root)
+	plain := f.App.Bound(home, folder)
+	top := f.App.Bound(home, root)
+	ctx := context.Background()
+	var units []struct{ id, scope string }
+	for i, binding := range []app.Binding{a, b, plain} {
+		u, _, err := binding.RememberSafe(ctx, f.App, "Synthetic isolated client memory "+string(rune('a'+i)), "fact", "", nil, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		units = append(units, struct{ id, scope string }{u.SID, u.Scope})
+	}
+	physicalFolder, _ := filepath.EvalSymlinks(folder)
+	if units[2].scope != "client:acme:folder:"+physicalFolder {
+		t.Fatal(units[2])
+	}
+	for i, binding := range []app.Binding{a, b, plain, top} {
+		for j, u := range units {
+			_, err := binding.Resolve(f.App, u.id)
+			if (err == nil) != (i == j) {
+				t.Fatalf("binding %d reading %d: %v", i, j, err)
+			}
+			_, err = binding.WriteScope(u.scope)
+			if (err == nil) != (i == j) {
+				t.Fatalf("binding %d writing %d: %v", i, j, err)
+			}
+		}
+		if !binding.Allows("client:acme") || binding.Allows("jcode@global") {
+			t.Fatal("top-level boundary", binding)
+		}
+		where, args := binding.SQL("u.scope", "u.source_id")
+		query := `SELECT count(*) FROM units u WHERE (` + where + `) AND body LIKE 'Synthetic isolated client memory %'`
+		var count int
+		if err := f.App.DB.QueryRow(query, args...).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		want := 1
+		if i == 3 {
+			want = 0
+		}
+		if count != want {
+			t.Fatalf("SQL binding %d count=%d want=%d", i, count, want)
+		}
+	}
+	if got := top.Places(); len(got) != 1 || got[0].Scope != "client:acme" {
+		t.Fatal(got)
+	}
+	child := filepath.Join(folder, "nested")
+	if err := os.MkdirAll(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if !f.App.Bound(home, child).Allows(units[2].scope) {
+		t.Fatal("owned ancestor folder hidden")
+	}
+	alias := filepath.Join(f.Root, "client-link")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	future := f.App.Bound(home, filepath.Join(alias, "future", "nested"))
+	if future.Err != nil || future.Places()[0].Scope != "client:acme:folder:"+filepath.Join(root, "future", "nested") {
+		t.Fatalf("future symlink: %+v %+v", future, future.Places())
+	}
+	if _, err := future.WriteScope("client:acme:folder:" + f.Root); err == nil {
+		t.Fatal("future path escaped client")
 	}
 }
 
