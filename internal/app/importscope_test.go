@@ -51,7 +51,7 @@ func TestEngramImportPlacesByDirectory(t *testing.T) {
 	}
 	want := map[string]string{
 		"engram:in-instance": "jcode@alpha", "engram:in-project": frogsScope,
-		"engram:at-home": "engram:bin", "engram:vanished": "engram:old", "engram:mapped": "sql_saga",
+		"engram:at-home": "folder:" + filepath.Clean(home), "engram:vanished": "engram:old", "engram:mapped": "sql_saga",
 	}
 	for _, it := range items {
 		if it.Scope != want[it.Origin] {
@@ -77,7 +77,7 @@ func TestEngramImportPlacesByDirectory(t *testing.T) {
 	}{
 		{"global elsewhere", global, "jcode@alpha", false},
 		{"global elsewhere", global, frogsScope, false},
-		{"global elsewhere", global, "engram:bin", true},
+		{"global elsewhere", global, "folder:" + filepath.Clean(home), false},
 		{"global in frogs", f.App.Bound(filepath.Join(home, ".jcode"), frogs), frogsScope, true},
 		{"alpha instance", f.App.Bound(filepath.Join(alphaRoot, ".jcode"), devops), "jcode@alpha", true},
 		{"alpha instance", f.App.Bound(filepath.Join(alphaRoot, ".jcode"), devops), frogsScope, false},
@@ -112,3 +112,48 @@ func TestEngramImportPlacesByDirectory(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// 2026-11-07 (user): imports from folders that are not projects belong to that
+// folder. A Sigrun note recalled in an unrelated session triggered this.
+func TestFolderImportsStayInTheirFolder(t *testing.T) {
+	f := scopetest.New(t)
+	plain := filepath.Join(f.Root, "notes", "quartz-pwa") // no git
+	sub := filepath.Join(plain, "assets")
+	workspace := filepath.Join(f.Root, "workspace") // two repos inside: a parent folder
+	gitRepo(t, filepath.Join(workspace, "one"))
+	gitRepo(t, filepath.Join(workspace, "two"))
+	if err := os.MkdirAll(sub, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{plain, workspace} {
+		if s, ok := f.App.ImportScopeForDir(dir); !ok || s != "folder:"+dir {
+			t.Fatalf("%s placed at %q %v", dir, s, ok)
+		}
+	}
+	obs := []ingest.EngramObservation{
+		{SyncID: "plain", Content: "Quartz PWA folder note", Project: ptr("quartz"), Scope: "project", Directory: plain},
+		{SyncID: "workspace", Content: "Workspace quartz note", Project: ptr("ws"), Scope: "project", Directory: workspace},
+	}
+	home, _ := os.UserHomeDir()
+	global := f.App.Bound(filepath.Join(home, ".jcode"), f.Cwd)
+	if _, err := global.MergeImport(app.NativePath(), ingest.EngramItems(obs, ingest.EngramOptions{ScopeForDir: f.App.ImportScopeForDir}), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.App.Reindex(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		cwd, scope string
+		allows     bool
+	}{
+		{plain, "folder:" + plain, true},
+		{sub, "folder:" + plain, true},
+		{f.Cwd, "folder:" + plain, false},
+		{workspace, "folder:" + workspace, true},
+		{filepath.Join(workspace, "one"), "folder:" + workspace, false},
+	} {
+		if got := f.App.Bound(filepath.Join(home, ".jcode"), c.cwd).Allows(c.scope); got != c.allows {
+			t.Errorf("session in %s: Allows(%s)=%v, want %v", c.cwd, c.scope, got, c.allows)
+		}
+	}
+}

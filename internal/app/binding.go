@@ -160,6 +160,22 @@ func (a *App) bound(jcodeHome, cwd string) Binding {
 			}
 			grow.Close()
 		}
+		// Imports from folders that are not projects keep their folder as the
+		// scope, folder:<path> (user 2026-11-07). Same rule as the stores above.
+		if frow, err := a.DB.Query(`SELECT DISTINCT scope FROM units WHERE scope LIKE 'folder:%'`); err != nil {
+			b.Scopes, b.Err = []string{"!*"}, err
+		} else {
+			for frow.Next() {
+				var s string
+				if frow.Scan(&s) == nil && !FolderOwns(strings.TrimPrefix(s, "folder:"), cwd) {
+					b.Scopes = append(b.Scopes, "!"+s)
+				}
+			}
+			if err := frow.Err(); err != nil {
+				b.Err = err
+			}
+			frow.Close()
+		}
 		if prow, err := a.DB.Query(`SELECT DISTINCT scope FROM units WHERE scope LIKE 'project:%'`); err != nil {
 			b.Scopes, b.Err = []string{"!*"}, err
 		} else {
@@ -524,4 +540,54 @@ func globalFolderStores(cwd string) map[string]bool {
 		}
 	}
 	return own
+}
+
+// FolderOwns reports whether a session in cwd sees a folder:<dir> memory: the
+// session is in dir itself, or below it. The home folder and workspace folders
+// (two or more git repositories directly inside, such as ~/Projects) are parents,
+// not projects, so their memories show only in exactly that folder.
+func FolderOwns(dir, cwd string) bool {
+	if dir == "" || cwd == "" {
+		return false
+	}
+	dir = filepath.Clean(dir)
+	cwds := []string{filepath.Clean(cwd)}
+	if phys, err := filepath.EvalSymlinks(cwd); err == nil && phys != cwds[0] {
+		cwds = append(cwds, phys)
+	}
+	for _, c := range cwds {
+		if c == dir {
+			return true
+		}
+	}
+	if isParentFolder(dir) {
+		return false
+	}
+	for _, c := range cwds {
+		if strings.HasPrefix(c, dir+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func isParentFolder(dir string) bool {
+	if home, err := os.UserHomeDir(); err == nil && filepath.Clean(home) == dir {
+		return true
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	repos := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			if _, err := os.Stat(filepath.Join(dir, e.Name(), ".git")); err == nil {
+				if repos++; repos >= 2 {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

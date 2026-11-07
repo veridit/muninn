@@ -15,8 +15,11 @@ import (
 //     scope, "jcode@<name>", so only that instance recalls it;
 //   - inside a git project (or a folder with .muninn/project): the project's
 //     scope, "project:<id>", recalled only by sessions in that project;
-//   - the home directory itself, or a folder that no longer exists: not
-//     resolved (ok=false), so the caller keeps its fallback.
+//   - any other existing folder, including the home folder: "folder:<dir>",
+//     seen by sessions in that folder (and below it, unless it is a parent
+//     folder, see FolderOwns);
+//   - a folder that no longer exists: not resolved (ok=false), so the caller
+//     keeps its fallback.
 //
 // The innermost match wins: a git project inside an instance root still
 // belongs to that instance, because the instance binding is what recalls.
@@ -49,11 +52,13 @@ func (a *App) ImportScopeForDir(dir string) (string, bool) {
 	if best != "" {
 		return best, true
 	}
-	if filepath.Clean(dir) == filepath.Clean(home) {
-		return "", false
+	if filepath.Clean(dir) != filepath.Clean(home) {
+		if p, err := project.Find(dir, false); err == nil {
+			return p.Scope(), true
+		}
 	}
-	if p, err := project.Find(dir, false); err == nil {
-		return p.Scope(), true
-	}
-	return "", false
+	// Not a project (no git, a repository without commits, the home folder or
+	// a workspace like ~/Projects): the folder itself is the place
+	// (user 2026-11-07). FolderOwns decides who sees it.
+	return "folder:" + dir, true
 }

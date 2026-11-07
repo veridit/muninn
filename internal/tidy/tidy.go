@@ -44,6 +44,9 @@ func (o Options) Validate() error {
 // TopScope folds client child scopes to client:<name>, all others to their
 // first colon-separated component, as used by client-group counts and votes.
 func TopScope(s string) string {
+	if strings.HasPrefix(s, "folder:") {
+		return s // each folder is its own place; paths may hold ':'
+	}
 	if strings.HasPrefix(s, "client:") {
 		p := strings.SplitN(s, ":", 3)
 		return p[0] + ":" + p[1]

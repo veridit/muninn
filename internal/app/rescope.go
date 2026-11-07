@@ -116,6 +116,11 @@ func (b Binding) MergeImport(path string, items []ingest.Imported, dry bool, sou
 		if scope == "" {
 			scope = "global"
 		}
+		// A copy the owner already moved into a client stays there: the store
+		// keeps it as a local change, and still refuses any client crossing.
+		if old, ok := existing[it.Origin]; ok && strings.HasPrefix(old, "client:") && !strings.HasPrefix(scope, "client:") {
+			continue
+		}
 		// A placed item's scope is where it was physically written (never a
 		// client, see ImportScopeForDir), so the importing binding's write
 		// policy does not apply. Client boundaries still hold in MergeImport.
