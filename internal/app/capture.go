@@ -377,6 +377,9 @@ func (b Binding) Capture(ctx context.Context, a *App, o CaptureOptions) (report 
 			}
 			c.Place = destination.Name
 			c.PlaceReason = strings.TrimSpace(c.PlaceReason)
+			if c.PlaceReason == "" {
+				c.PlaceReason = "No placement reason supplied by extractor."
+			}
 			if local[c.Content] {
 				report.Actions = append(report.Actions, CaptureAction{Candidate: c, Scope: destination.Scope, PlaceHint: b.PlacementHint(c.Content, destination.Scope), Action: "skip", Reason: "duplicate proposal in batch"})
 				continue

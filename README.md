@@ -425,7 +425,9 @@ markdown notes, project memory files and jcode memory files under `acme`
 are visible only to `acme`, regardless of their old stored scope. Notes
 outside client roots are never visible inside one. This applies to search,
 related ids, show, recall, stats and injection history without changing ids
-or migrating the index. Source ancestry is cached only within the process.
+or migrating the index. Legacy non-native client sources are still presented
+at `client:<name>` top level, so this placement change does not reclassify their
+project ownership. Source ancestry is cached only within the process.
 Invalid source-root markers hide those sources from every binding.
 
 Only an explicit admin CLI operation can move an owned memory across it:
