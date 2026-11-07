@@ -37,19 +37,37 @@ func targetAllowed(source, target string) bool {
 func allowedTargets(e Entry, scopes []string) []string {
 	out := []string{}
 	for _, s := range scopes {
-		if targetAllowed(effectiveSource(e), s) {
+		if entryTargetAllowed(e, s, scopes) {
 			out = append(out, s)
 		}
 	}
 	return out
 }
 
-func concreteTarget(top string, scopes []string, votes map[string]int) string {
+func entryTargetAllowed(e Entry, target string, scopes []string) bool {
+	if !targetAllowed(effectiveSource(e), target) {
+		return false
+	}
+	if target == "jcode@global" {
+		winner, _ := concreteTarget(TopScope(target), scopes, e.ConcreteVotes)
+		return e.ConcreteVotes[target] > 0 && winner == target
+	}
+	return true
+}
+
+func concreteTarget(top string, scopes []string, votes map[string]int) (string, bool) {
 	best := ""
+	candidates := 0
 	for _, s := range scopes {
-		if TopScope(s) == top && (best == "" || votes[s] > votes[best]) {
-			best = s
+		if TopScope(s) == top {
+			candidates++
+			if best == "" || votes[s] > votes[best] || (votes[s] == votes[best] && s < best) {
+				best = s
+			}
 		}
 	}
-	return best
+	if best != "" && votes[best] == 0 && (candidates > 1 || best == "jcode@global") {
+		return "", true
+	}
+	return best, false
 }

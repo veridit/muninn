@@ -63,7 +63,7 @@ func tidyCmd() *cobra.Command {
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "%d active canonical units; %d suspects; %d maybe general\n", plan.Units, len(plan.Entries), len(plan.General))
 		fmt.Fprintf(cmd.OutOrStdout(), "Classes: strong=%d group-only=%d vote-only=%d\n", plan.Classes["strong"], plan.Classes["group-only"], plan.Classes["vote-only"])
-		fmt.Fprintf(cmd.OutOrStdout(), "Dropped before judging: boundary=%d invalid-target=%d\n", plan.DroppedBoundary, plan.DroppedInvalidTarget)
+		fmt.Fprintf(cmd.OutOrStdout(), "Dropped before judging: boundary=%d invalid-target=%d ambiguous-target=%d\n", plan.DroppedBoundary, plan.DroppedInvalidTarget, plan.DroppedAmbiguousTarget)
 		for _, t := range plan.Transitions {
 			fmt.Fprintf(cmd.OutOrStdout(), "%s -> %s [%s]: %d\n", t.Source, t.Target, t.Class, t.Count)
 		}

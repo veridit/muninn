@@ -48,20 +48,37 @@ muninn tidy apply /path/to/plan.json --only 'global->client:example'
 ```
 
 Defaults are `--min-sim 0.70 --majority 10 --own-max 3`, plus
-`--group-purity 0.6666666666666666 --group-min 5 --group-score 3`.
+`--group-purity 0.6666666666666666 --group-min 5 --group-floor 0.0024 --group-score 3`.
 Top scope is computed from the **effective recall scope**, using the same
 physical-source client-root resolution as `Binding.ScopeFor`: a non-native
 source under a `.muninn/client` root belongs to that `client:<name>`, even if its
 stored label is `jcode@...:<folder>`. Native memories retain their stored scope.
 Invalid client markers fail the scan closed. A source file symlink is resolved
 before walking its physical ancestors. No move is proposed to the effective
-source's own top scope.
+source's own top scope. Client ownership is immutable provenance, not a topic
+guess: a client memory can only target that client's concrete child scopes, never
+another client or a non-client scope. Non-client memories cannot enter clients
+based on similarity. Blocked proposals are dropped before judging and counted.
 
 Top scope is `client:<name>` with child scopes dropped, otherwise the part before
-the first colon (including `project` for `project:<id>`). Active canonical memory
+the first colon (including `project` for `project:<id>`). `folder:<path>` stays
+its own place, even when the path contains colons. These are counting buckets,
+not move targets: every target must be an existing effective, concrete writable
+scope. The concrete scope with the most qualifying voting neighbors within the
+winning bucket is selected, with lexical ties. Group-only proposals with several
+possible concrete targets and zero concrete votes are suppressed and counted.
+The real `jcode@global` root is allowed only when it wins concrete neighbor votes,
+never synthesized from per-folder `jcode@global:<hash>` stores. Retired `engram:*`
+aliases and bare `project`/`engram` buckets are not writable targets.
+Active canonical memory
 identities are counted once, not once per mirror. For each topic group, tidy
 counts member memories by top scope. It is scope C's client group when C has at
-least two-thirds of members and at least max(5, 1% of C's memories) members.
+least two-thirds of members and at least max(5, ceil(0.24% of C's memories)) members.
+`--group-floor` is a fraction in [0, 1], with 0 selecting the minimum-only rule.
+The 0.24% default was fitted to the November 7, 2026 store to retain three
+distinctive Brovs groups without admitting its smaller generic labels. It is
+not a universally calibrated specificity threshold. Purity and label review
+remain necessary, and future corpus growth may change group coverage.
 A label uses its five most frequent concepts among canonical member memories
 (lexical tie-breaks). Groups whose entire label is dates (`YYYY-MM-DD`) or
 integers are excluded. Purity must be in `(0.5, 1]`. Active mirror memberships
@@ -86,7 +103,13 @@ as its signature, class counts, and source-to-target counts per class. Only expl
 nearest neighbors, matched anchors, group scores, and up to five client-group
 labels each for the effective current and proposed scopes, clearly marked heuristic evidence.
 Batches of five run strong first, then group-only, then vote-only. The default
-limit is 100, invalid answers become `unsure`. Scan writes only private plan and
+limit is 100, invalid answers become `unsure`. Each entry includes its exact
+provenance-safe concrete `allowed_targets`, enforced again by the parser.
+Harmless stay/unsure answers that repeat the current or proposed target normalize
+to an empty target, never a move. Raw invalid and normalized judge objects are
+logged separately in a private (0600) `<plan>.judge-debug.jsonl`, never in the plan.
+Missing/duplicate fields, malformed batch lengths, and forbidden moves still fail
+closed. Scan writes only private plan and
 summary files (0600), normally under the data directory's `tidy/`, and never
 refreshes the index or writes to the memory store. JSON `source` and fingerprints
 retain the stored scope for stale-plan checks and apply/undo; `effective_source`

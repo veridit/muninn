@@ -62,7 +62,7 @@ func parseVerdicts(raw string, entries []Entry, scopes []string) ([]Verdict, []j
 		valid := strict && v.Reason != "" && len(v.Reason) <= 1024 && !strings.ContainsAny(v.Reason, "\r\n\x00") && !project.LooksSecret(v.Reason)
 		switch v.Decision {
 		case "move":
-			valid = valid && allowed[v.Target] && targetAllowed(effectiveSource(entries[i]), v.Target)
+			valid = valid && allowed[v.Target] && entryTargetAllowed(entries[i], v.Target, scopes)
 		case "stay", "unsure":
 			valid = valid && (v.Target == "" || v.Target == entries[i].Source || v.Target == effectiveSource(entries[i]) || v.Target == entries[i].Target)
 			vs[i].Target = ""

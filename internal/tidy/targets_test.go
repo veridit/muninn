@@ -98,7 +98,7 @@ func TestRetiredAndBareScopesCannotBecomeTargets(t *testing.T) {
 			g.Units[i].Scope = s
 		}
 		p, err := Scan(g, Defaults(), nil)
-		if err != nil || len(p.Entries) != 0 || p.DroppedInvalidTarget != 1 {
+		if err != nil || len(p.Entries) != 0 || p.DroppedInvalidTarget+p.DroppedBoundary != 1 {
 			t.Fatalf("%s: entries=%v dropped=%d err=%v", s, p.Entries, p.DroppedInvalidTarget, err)
 		}
 		raw := fmt.Sprintf(`[{"decision":"move","target":%q,"reason":"synthetic"}]`, s)
@@ -199,5 +199,45 @@ func TestGroupFloorFractionAndMinimum(t *testing.T) {
 		if o.Validate() == nil {
 			t.Fatal("invalid floor accepted")
 		}
+	}
+}
+
+func TestZeroVoteGroupTargetAmbiguityIsSuppressed(t *testing.T) {
+	g := voteFixture()
+	g.Edges = nil
+	for i := 1; i <= 12; i++ {
+		g.Units[i].Scope = "project:one"
+		if i > 6 {
+			g.Units[i].Scope = "project:two"
+		}
+	}
+	p, err := Scan(g, Defaults(), nil)
+	if err != nil || len(p.Entries) != 0 || p.DroppedAmbiguousTarget != 1 {
+		t.Fatalf("entries=%v ambiguous=%d err=%v", p.Entries, p.DroppedAmbiguousTarget, err)
+	}
+	// A single concrete group owner is not ambiguous even without vote evidence.
+	for i := 1; i <= 12; i++ {
+		g.Units[i].Scope = "project:one"
+	}
+	p, err = Scan(g, Defaults(), nil)
+	if err != nil || len(p.Entries) != 1 || p.Entries[0].Target != "project:one" {
+		t.Fatalf("entries=%v err=%v", p.Entries, err)
+	}
+}
+
+func TestRealGlobalRootRequiresWinningConcreteVotes(t *testing.T) {
+	scopes := []string{"jcode@global:hash", "jcode@global"}
+	for _, tc := range []struct {
+		root, folder int
+		want         bool
+	}{{0, 0, false}, {0, 10, false}, {1, 10, false}, {10, 1, true}, {10, 10, true}} {
+		e := Entry{Source: "global", ConcreteVotes: map[string]int{"jcode@global": tc.root, "jcode@global:hash": tc.folder}}
+		v := ParseVerdicts(`[{"decision":"move","target":"jcode@global","reason":"synthetic"}]`, []Entry{e}, scopes)[0]
+		if (v.Decision == "move") != tc.want {
+			t.Fatalf("votes=%v verdict=%+v", e.ConcreteVotes, v)
+		}
+	}
+	if Defaults().GroupFloor != .0024 {
+		t.Fatal("approved floor default changed")
 	}
 }

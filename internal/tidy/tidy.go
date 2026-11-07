@@ -30,7 +30,7 @@ type Options struct {
 }
 
 func Defaults() Options {
-	return Options{MinSim: .70, Majority: 10, OwnMax: 3, GroupPurity: 2.0 / 3, GroupMin: 5, GroupFloor: .01, GroupScore: 3}
+	return Options{MinSim: .70, Majority: 10, OwnMax: 3, GroupPurity: 2.0 / 3, GroupMin: 5, GroupFloor: .0024, GroupScore: 3}
 }
 func (o Options) Validate() error {
 	if math.IsNaN(o.GroupFloor) || math.IsInf(o.GroupFloor, 0) || o.GroupFloor < 0 || o.GroupFloor > 1 {
@@ -66,6 +66,7 @@ type Neighbor struct {
 	Text  string  `json:"text"`
 }
 type Entry struct {
+	ConcreteVotes      map[string]int      `json:"concrete_votes"`
 	EffectiveSource    string              `json:"effective_source,omitempty"`
 	GroupScores        map[string]int      `json:"group_scores"`
 	OwnClientGroups    []ClientGroup       `json:"own_client_groups"`
@@ -86,19 +87,20 @@ type Entry struct {
 	Judged             bool                `json:"judged"`
 }
 type Plan struct {
-	DroppedBoundary      int               `json:"dropped_boundary"`
-	DroppedInvalidTarget int               `json:"dropped_invalid_target"`
-	ClientGroups         []ClientGroup     `json:"client_groups"`
-	Classes              map[string]int    `json:"class_counts"`
-	Transitions          []ClassTransition `json:"class_transitions"`
-	Version              int               `json:"version"`
-	Created              time.Time         `json:"created"`
-	Database             string            `json:"database"`
-	Options              Options           `json:"options"`
-	Units                int               `json:"units"`
-	Entries              []Entry           `json:"entries"`
-	General              []Entry           `json:"maybe_general"`
-	Scopes               []string          `json:"scopes"`
+	DroppedAmbiguousTarget int               `json:"dropped_ambiguous_target"`
+	DroppedBoundary        int               `json:"dropped_boundary"`
+	DroppedInvalidTarget   int               `json:"dropped_invalid_target"`
+	ClientGroups           []ClientGroup     `json:"client_groups"`
+	Classes                map[string]int    `json:"class_counts"`
+	Transitions            []ClassTransition `json:"class_transitions"`
+	Version                int               `json:"version"`
+	Created                time.Time         `json:"created"`
+	Database               string            `json:"database"`
+	Options                Options           `json:"options"`
+	Units                  int               `json:"units"`
+	Entries                []Entry           `json:"entries"`
+	General                []Entry           `json:"maybe_general"`
+	Scopes                 []string          `json:"scopes"`
 }
 type Edge struct {
 	From, To int64
@@ -277,6 +279,7 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 			return ns[i].Sim > ns[j].Sim
 		})
 		entry := Entry{SID: u.SID, Origin: u.Origin, Fingerprint: Fingerprint(u), Source: u.Scope, Text: redacted(u.Body), Votes: votes, Decision: "unsure", Reason: "unjudged proposal"}
+		entry.ConcreteVotes = concreteVotes
 		entry.EffectiveSource = g.scopeFor(u)
 		seen := map[string]bool{u.SID: true}
 		for _, e := range ns {
@@ -329,7 +332,17 @@ func Scan(g Graph, o Options, roots map[string][]string) (Plan, error) {
 			target = voteTarget
 		}
 		if target != "" {
-			entry.Target = concreteTarget(target, p.Scopes, concreteVotes)
+			clientSource := strings.HasPrefix(entry.EffectiveSource, "client:")
+			if (clientSource && target != own) || (!clientSource && strings.HasPrefix(target, "client:")) {
+				p.DroppedBoundary++
+				continue
+			}
+			var ambiguous bool
+			entry.Target, ambiguous = concreteTarget(target, p.Scopes, concreteVotes)
+			if ambiguous {
+				p.DroppedAmbiguousTarget++
+				continue
+			}
 			if entry.Target == "" {
 				p.DroppedInvalidTarget++
 				continue
@@ -417,7 +430,7 @@ func (p Plan) Groups() []Group {
 func (p Plan) Markdown() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Muninn tidy review\n\n%d active canonical units, %d suspects, %d maybe-general candidates.\n\nUnjudged proposals are unsure, never automatically approved. Review decisions and targets in the JSON before apply. Memory text is never rewritten.\n", p.Units, len(p.Entries), len(p.General))
-	fmt.Fprintf(&b, "\nDropped before judging: %d provenance-boundary proposals, %d without a concrete writable target.\n", p.DroppedBoundary, p.DroppedInvalidTarget)
+	fmt.Fprintf(&b, "\nDropped before judging: %d provenance-boundary proposals, %d without a concrete writable target, %d ambiguous zero-vote concrete targets.\n", p.DroppedBoundary, p.DroppedInvalidTarget, p.DroppedAmbiguousTarget)
 	writeSignatures(&b, p)
 	fmt.Fprintf(&b, "\n## Counts per class\n\nstrong=%d group-only=%d vote-only=%d\n", p.ClassCounts()["strong"], p.ClassCounts()["group-only"], p.ClassCounts()["vote-only"])
 	b.WriteString("\n## Source -> target counts per class\n")

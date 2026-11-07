@@ -47,7 +47,9 @@ func TestClientGroupSelectionBoundaries(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := selectionFixture(tc.owner, tc.other, tc.size, tc.terms)
-			groups, scores := clientGroups(g, Defaults())
+			o := Defaults()
+			o.GroupFloor = .01
+			groups, scores := clientGroups(g, o)
 			if (len(groups) == 1) != tc.want {
 				t.Fatalf("groups=%+v", groups)
 			}
