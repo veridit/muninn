@@ -64,7 +64,9 @@ counts member memories by top scope. It is scope C's client group when C has at
 least two-thirds of members and at least max(5, 1% of C's memories) members.
 A label uses its five most frequent concepts among canonical member memories
 (lexical tie-breaks). Groups whose entire label is dates (`YYYY-MM-DD`) or
-integers are excluded.
+integers are excluded. Purity must be in `(0.5, 1]`. Active mirror memberships
+resolve to their canonical identity, using `max(n)` per group rather than summing
+mirrors; label frequency counts each canonical identity/concept once.
 
 `groupScore(u,C)` sums the stored concept counts `n` for u's memberships in C's
 client groups. A group signal requires score >= 3 and >= three times u's own-scope
@@ -72,8 +74,11 @@ score. The neighbor vote is unchanged: similarity >= 0.70, at least 10 votes for
 the other scope and at most 3 for the current top scope. Classes are **strong**
 (both vote and group signal for the same target), **group-only** (group signal
 without a vote for that target), and **vote-only** (vote without a group signal).
-Anchors remain extra evidence but cannot create suspects on their own. Evenly
-mixed client neighborhoods remain separately listed as maybe general.
+Anchors remain extra evidence but cannot create suspects on their own. Tidy emits
+one proposal per memory: prefer a vote target that also passes the group condition,
+otherwise the highest qualifying groupScore, otherwise the vote-only target.
+Equal group scores use lexical scope order. Evenly mixed client neighborhoods
+remain separately listed as maybe general.
 
 Plans and Markdown include each scope's top five client groups by member count
 as its signature, class counts, and source-to-target counts per class. Only explicit
@@ -89,7 +94,9 @@ records recall's view. Report groupings and class transitions use effective
 scopes. An apply `--only` filter still uses the exact stored `source->target`
 values from the JSON.
 
-Before applying, stop other manual memory writers. Apply blocks capture with its
+Before applying, stop other manual memory writers. Rescan if client-root markers
+or source symlinks change after review: stored fingerprints do not cover those
+filesystem-only provenance changes. Apply blocks capture with its
 lease, rejects stale reviewed entries, backs up `memories.json`, saves recovery
 files and a receipt, and reindexes once after the batch. Native memories use the
 same rescope path as `muninn rescope`. Upstream memories become exact native

@@ -32,7 +32,10 @@ func Defaults() Options {
 	return Options{MinSim: .70, Majority: 10, OwnMax: 3, GroupPurity: 2.0 / 3, GroupMin: 5, GroupScore: 3}
 }
 func (o Options) Validate() error {
-	if math.IsNaN(o.MinSim) || math.IsInf(o.MinSim, 0) || o.MinSim < 0 || o.MinSim > 1 || o.Majority < 1 || o.Majority > 16 || o.OwnMax < 0 || math.IsNaN(o.GroupPurity) || math.IsInf(o.GroupPurity, 0) || o.GroupPurity <= .5 || o.GroupPurity > 1 || o.GroupMin < 1 || o.GroupScore < 1 {
+	if math.IsNaN(o.GroupPurity) || math.IsInf(o.GroupPurity, 0) || o.GroupPurity <= .5 || o.GroupPurity > 1 {
+		return fmt.Errorf("--group-purity must be greater than 0.5 and at most 1")
+	}
+	if math.IsNaN(o.MinSim) || math.IsInf(o.MinSim, 0) || o.MinSim < 0 || o.MinSim > 1 || o.Majority < 1 || o.Majority > 16 || o.OwnMax < 0 || o.GroupMin < 1 || o.GroupScore < 1 {
 		return fmt.Errorf("invalid tidy thresholds")
 	}
 	return nil

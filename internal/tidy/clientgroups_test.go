@@ -132,7 +132,7 @@ func TestGroupOptionsValidation(t *testing.T) {
 	for _, value := range []float64{math.NaN(), math.Inf(1), -.1, 0, .5, 1.01} {
 		o := Defaults()
 		o.GroupPurity = value
-		if o.Validate() == nil {
+		if err := o.Validate(); err == nil || !strings.Contains(err.Error(), "--group-purity must be greater than 0.5 and at most 1") {
 			t.Fatalf("accepted purity %v", value)
 		}
 	}
@@ -163,6 +163,58 @@ func TestGroupLabelFrequencyOrderAndLimit(t *testing.T) {
 	}
 }
 
+func TestGroupThresholdOverrides(t *testing.T) {
+	g := selectionFixture(4, 0, 4, map[string]int{"quartz": 4})
+	o := Defaults()
+	if groups, _ := clientGroups(g, o); len(groups) != 0 {
+		t.Fatal(groups)
+	}
+	o.GroupMin = 4
+	if groups, _ := clientGroups(g, o); len(groups) != 1 {
+		t.Fatal(groups)
+	}
+	g = voteFixture()
+	o = Defaults()
+	o.GroupScore = 4
+	p, err := Scan(g, o, nil)
+	if err != nil || p.Entries[0].Strength != "vote-only" {
+		t.Fatalf("entries=%+v err=%v", p.Entries, err)
+	}
+	o.GroupScore = 3
+	p, err = Scan(g, o, nil)
+	if err != nil || p.Entries[0].Strength != "strong" {
+		t.Fatalf("entries=%+v err=%v", p.Entries, err)
+	}
+}
+
+func TestMultipleGroupTargetsPreferStrongThenScoreThenLexical(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		vote          bool
+		a, b          int
+		target, class string
+	}{
+		{"qualifying vote wins", true, 3, 4, "client:acme", "strong"},
+		{"highest score", false, 3, 4, "personal", "group-only"},
+		{"lexical tie", false, 3, 3, "client:acme", "group-only"},
+		{"group outranks unsupported vote", true, 2, 4, "personal", "group-only"},
+		{"vote fallback", true, 2, 2, "client:acme", "vote-only"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := voteFixture()
+			g.Topics[0].Members[1] = tc.a
+			g.Topics = append(g.Topics, TopicGroup{ID: 2, Members: map[int64]int{1: tc.b, 14: 1, 15: 1, 16: 1, 17: 1, 18: 1}, Terms: map[string]int{"garden": 5}})
+			if !tc.vote {
+				g.Edges = nil
+			}
+			p, err := Scan(g, Defaults(), nil)
+			if err != nil || len(p.Entries) != 1 || p.Entries[0].Target != tc.target || p.Entries[0].Strength != tc.class {
+				t.Fatalf("entries=%+v err=%v", p.Entries, err)
+			}
+		})
+	}
+}
+
 func TestReadTopicGroupsCanonicalMirrorsAndLabels(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "muninn.db")
 	db, err := store.Open(path)
@@ -183,7 +235,7 @@ func TestReadTopicGroupsCanonicalMirrorsAndLabels(t *testing.T) {
 	for _, query := range []string{
 		`INSERT INTO concepts VALUES(1,'quartz'),(2,'garnet')`,
 		`INSERT INTO communities VALUES(1,7),(2,7)`,
-		fmt.Sprintf(`INSERT INTO unit_communities VALUES(7,%d,2),(7,%d,2)`, mirror, canonical),
+		fmt.Sprintf(`INSERT INTO unit_communities VALUES(7,%d,2),(7,%d,1)`, mirror, canonical),
 		fmt.Sprintf(`INSERT INTO unit_concepts VALUES(%d,1),(%d,2),(%d,1),(%d,2)`, mirror, mirror, canonical, canonical),
 	} {
 		if _, err = db.Exec(query); err != nil {

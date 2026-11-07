@@ -94,7 +94,14 @@ func TestAnchorsDistinctiveRootsAndScopes(t *testing.T) {
 			t.Fatalf("TopScope(%s)", in)
 		}
 	}
-	for _, bad := range []Options{{MinSim: -.1}, {Majority: 0}, {Majority: 17}, {OwnMax: -1}} {
+	for _, mutate := range []func(*Options){
+		func(o *Options) { o.MinSim = -.1 },
+		func(o *Options) { o.Majority = 0 },
+		func(o *Options) { o.Majority = 17 },
+		func(o *Options) { o.OwnMax = -1 },
+	} {
+		bad := Defaults()
+		mutate(&bad)
 		if bad.Validate() == nil {
 			t.Fatal("accepted invalid thresholds")
 		}
