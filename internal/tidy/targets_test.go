@@ -138,6 +138,9 @@ func TestPrivateJudgeDebugAndPerEntryAllowlist(t *testing.T) {
 		if len(input.Entries) != 1 || len(input.Entries[0].Allowed) != 1 || input.Entries[0].Allowed[0] != "project:synthetic" {
 			t.Errorf("unsafe allowlist: %+v", input)
 		}
+		if strings.Contains(req.Messages[1].Content, `"scopes":`) || !strings.Contains(req.Messages[0].Content, "never evidence that the current placement is wrong") {
+			t.Error("move allowlist could be mistaken for current scope existence")
+		}
 		raw := `[{"decision":"stay","target":"project:synthetic","reason":"synthetic reason"}]`
 		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": raw}, "finish_reason": "stop"}}})
 	}))
